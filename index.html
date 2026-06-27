@@ -1,0 +1,943 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+<meta name="theme-color" content="#0E1014" />
+<title>つもりキャッシュ</title>
+<style>
+  html, body, #root { height: 100%; margin: 0; }
+  html, body { width: 100%; overscroll-behavior-y: none; }
+  body { background: #0E1014; -webkit-font-smoothing: antialiased;
+         font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", system-ui, sans-serif; }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  #loading { color: #7B818C; font-size: 13px; line-height:1.8; height: 100%;
+             display: flex; align-items: center; justify-content: center; text-align:center;
+             padding:0 24px; white-space:pre-wrap; }
+  input, button, textarea { font-family: inherit; }
+  input, textarea { font-size: 16px; } /* iOSの自動ズーム防止 */
+  ::placeholder { color: #5A606B; }
+</style>
+<script>
+  // 起動でコケたら原因を画面に出す（無言の読み込み中を防ぐ）
+  function showErr(msg){ var r=document.getElementById('loading'); if(r){ r.textContent='起動エラー:\n'+msg; } }
+  window.addEventListener('error', function(e){ showErr((e.message||'')+(e.filename?'\n'+e.filename:'')); });
+  window.addEventListener('unhandledrejection', function(e){ var r=e.reason; showErr(r&&(r.message||r)||'読み込みに失敗'); });
+</script>
+<script src="https://unpkg.com/@babel/standalone@7/babel.min.js"></script>
+</head>
+<body>
+<div id="root"><div id="loading">つもりキャッシュ を読み込み中…</div></div>
+<script type="text/babel" data-type="module" data-presets="react">
+import React from "https://esm.sh/react@18.3.1";
+import { createRoot } from "https://esm.sh/react-dom@18.3.1/client";
+import { useState, useEffect, useMemo } from "https://esm.sh/react@18.3.1";
+import { PiggyBank, Wallet, Store, Home, Plus, X, Coffee, Utensils, ShoppingBag, Bus, Gamepad2, Heart, Sparkles, Settings, Download, Upload, Trash2, Check, Star, TrendingUp, TrendingDown, Gift, Pencil, ChevronRight, Bath, BookOpen, Wine, Cigarette, Smartphone, Plane, Shirt, Receipt, Coins, ArrowLeft, Cake, Music, Dumbbell, Car, Pizza, IceCream, Beer, GraduationCap, Palette } from "https://esm.sh/lucide-react@0.383.0?deps=react@18.3.1";
+
+/* ============================================================
+   つもりキャッシュ — つもり貯金 × 家計簿 × ご褒美 × 満足度
+   端末内(localStorage)に保存。サーバー不要・インストール不要。
+   ============================================================ */
+
+const uid = () => Math.random().toString(36).slice(2, 9) + Date.now().toString(36).slice(-4);
+const yen = (n) => "¥" + Math.round(n || 0).toLocaleString("ja-JP");
+const todayISO = () => { const d = new Date(); return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10); };
+const monthKey = (iso) => (iso || todayISO()).slice(0, 7);
+const fmtDate = (iso) => { const [y, m, d] = iso.split("-"); return `${+m}/${+d}`; };
+const fmtMonth = (mk) => { const [y, m] = mk.split("-"); return `${y}年${+m}月`; };
+
+// アイコン：保存はキー文字列で行う（関数はJSON化できないため）
+const ICONS = {
+  coffee: Coffee, utensils: Utensils, pizza: Pizza, icecream: IceCream, cake: Cake, beer: Beer, wine: Wine,
+  shopping: ShoppingBag, shirt: Shirt, bus: Bus, car: Car, plane: Plane, game: Gamepad2, music: Music,
+  book: BookOpen, dumbbell: Dumbbell, bath: Bath, phone: Smartphone, cig: Cigarette, heart: Heart,
+  gift: Gift, star: Star, sparkles: Sparkles, coins: Coins, receipt: Receipt, school: GraduationCap, store: Store,
+};
+const Ic = ({ name, ...p }) => { const C = ICONS[name] || Receipt; return <C {...p} />; };
+const ICON_KEYS = Object.keys(ICONS);
+
+// ---- デザインスキン（10パターン）----
+// 配色 + フォント + 角丸 + カードの質感(flat/outline/elevated/glass) を変えて見た目を大きく変える
+const FONTS = {
+  sans: `-apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", system-ui, sans-serif`,
+  rounded: `"Hiragino Maru Gothic ProN", "Quicksand", "M PLUS Rounded 1c", -apple-system, "Hiragino Sans", system-ui, sans-serif`,
+  serif: `"Hiragino Mincho ProN", "Yu Mincho", "Noto Serif JP", Georgia, serif`,
+  mono: `ui-monospace, "SF Mono", Menlo, "Hiragino Sans", monospace`,
+  tight: `"Helvetica Neue", Arial, "Hiragino Sans", sans-serif`,
+};
+const RAD = {
+  sharp: { card: 8, btn: 9, chip: 7, pill: 6, hero: 12, icon: 9, sheet: 16 },
+  soft: { card: 16, btn: 13, chip: 20, pill: 8, hero: 20, icon: 11, sheet: 22 },
+  round: { card: 22, btn: 16, chip: 24, pill: 12, hero: 26, icon: 15, sheet: 28 },
+};
+
+const SKINS = {
+  midnight: { name: "ミッドナイト", mode: "dark", font: "sans", radius: "soft", surface: "elevated",
+    pal: { bg: "#0E1014", card: "#171A21", card2: "#1F242E", modal: "#1B1F28", line: "#272D38", hi: "#EEF1F6", lo: "#8A92A0", gold: "#E7B84B", onGold: "#1A1305", pos: "#46C28E", neg: "#F0816A", scrim: "rgba(8,9,12,0.7)" } },
+  graphite: { name: "グラファイト", mode: "dark", font: "tight", radius: "sharp", surface: "flat",
+    pal: { bg: "#15171C", card: "#1C1F26", card2: "#242832", modal: "#1E222B", line: "#2C313C", hi: "#E8EBF0", lo: "#868D9B", gold: "#6E9BF0", onGold: "#06101F", pos: "#54C08C", neg: "#E8806E", scrim: "rgba(10,11,14,0.72)" } },
+  ocean: { name: "オーシャン", mode: "dark", font: "sans", radius: "soft", surface: "glass",
+    pal: { bg: "#091018", card: "rgba(18,34,52,0.66)", card2: "rgba(28,46,68,0.7)", modal: "#102134", line: "rgba(90,140,180,0.28)", hi: "#E6EEF8", lo: "#88A0BA", gold: "#46C7E8", onGold: "#04121E", pos: "#4FC9A6", neg: "#F08A78", scrim: "rgba(6,12,20,0.72)" } },
+  neon: { name: "ネオン", mode: "dark", font: "rounded", radius: "round", surface: "elevated",
+    pal: { bg: "#0B0712", card: "#171026", card2: "#241738", modal: "#1B1230", line: "#2E1F47", hi: "#F0EAFB", lo: "#9A8CB8", gold: "#C45CFF", onGold: "#1A0726", pos: "#3FE0B0", neg: "#FF6B9D", scrim: "rgba(8,4,16,0.74)" } },
+  forest: { name: "フォレスト", mode: "dark", font: "sans", radius: "soft", surface: "outline",
+    pal: { bg: "#0C140F", card: "#13201A", card2: "#1B2C23", modal: "#16241C", line: "#2A4034", hi: "#E6F2E9", lo: "#85A091", gold: "#8FD158", onGold: "#08220A", pos: "#5BC98A", neg: "#E89A5C", scrim: "rgba(6,12,8,0.72)" } },
+  sakura: { name: "さくら", mode: "light", font: "rounded", radius: "round", surface: "elevated",
+    pal: { bg: "#FBF1F4", card: "#FFFFFF", card2: "#F7E7EC", modal: "#FFFFFF", line: "#F0D8DF", hi: "#3E2A31", lo: "#A07E88", gold: "#E586A6", onGold: "#FFFFFF", pos: "#3FA888", neg: "#E07A6A", scrim: "rgba(58,42,48,0.32)" } },
+  cream: { name: "クリーム", mode: "light", font: "serif", radius: "soft", surface: "elevated",
+    pal: { bg: "#F6F2EA", card: "#FFFFFF", card2: "#EFE9DD", modal: "#FFFFFF", line: "#E5DDCC", hi: "#2E2A20", lo: "#8C8472", gold: "#C09A3F", onGold: "#FFFFFF", pos: "#3FA070", neg: "#D9764F", scrim: "rgba(46,42,34,0.3)" } },
+  paper: { name: "ペーパー", mode: "light", font: "mono", radius: "sharp", surface: "outline",
+    pal: { bg: "#EFE9DC", card: "#F8F3E8", card2: "#E9E1CD", modal: "#F8F3E8", line: "#D6CBAF", hi: "#3A352A", lo: "#8A8068", gold: "#B07A3C", onGold: "#FFFFFF", pos: "#4A8E5E", neg: "#C75D45", scrim: "rgba(40,36,28,0.34)" } },
+  pastel: { name: "パステル", mode: "light", font: "rounded", radius: "round", surface: "flat",
+    pal: { bg: "#F3F1FB", card: "#FFFFFF", card2: "#ECE9F8", modal: "#FFFFFF", line: "#E2DDF2", hi: "#3A3450", lo: "#9189AE", gold: "#8A7DE5", onGold: "#FFFFFF", pos: "#46C2A0", neg: "#F38AA0", scrim: "rgba(40,36,60,0.3)" } },
+  mono: { name: "モノクロ", mode: "light", font: "tight", radius: "sharp", surface: "outline",
+    pal: { bg: "#F7F7F5", card: "#FFFFFF", card2: "#EFEFED", modal: "#FFFFFF", line: "#15151500", hi: "#0A0A0A", lo: "#6B6B6B", gold: "#E5342B", onGold: "#FFFFFF", pos: "#1A8A4A", neg: "#E5342B", scrim: "rgba(0,0,0,0.42)" } },
+};
+// モノクロは枠線を濃い黒にしたいので個別指定
+SKINS.mono.pal.line = "#161616";
+
+function resolveSkin(key) {
+  const sk = SKINS[key] || SKINS.midnight;
+  const p = sk.pal;
+  const R = RAD[sk.radius] || RAD.soft;
+  const dark = sk.mode === "dark";
+  let bd, elev, glass = "none";
+  if (sk.surface === "flat") { bd = `1px solid ${p.line}`; elev = "none"; }
+  else if (sk.surface === "outline") { bd = `1.5px solid ${p.line}`; elev = "none"; }
+  else if (sk.surface === "glass") { bd = `1px solid ${p.line}`; elev = dark ? "0 6px 22px rgba(0,0,0,0.4)" : "0 6px 20px rgba(0,0,0,0.12)"; glass = "blur(14px) saturate(1.25)"; }
+  else { bd = `1px solid ${p.line}`; elev = dark ? "0 3px 14px rgba(0,0,0,0.32)" : "0 6px 18px rgba(70,60,50,0.09)"; } // elevated
+  return { ...p, font: FONTS[sk.font] || FONTS.sans, R, dark, bd, elev, cardBg: p.card, glass, glow: key === "neon" };
+}
+
+const DEFAULT_CATS = [
+  { id: "food", name: "食費", icon: "utensils" },
+  { id: "cafe", name: "カフェ", icon: "coffee" },
+  { id: "daily", name: "日用品", icon: "shopping" },
+  { id: "transit", name: "交通", icon: "bus" },
+  { id: "hobby", name: "趣味", icon: "game" },
+  { id: "social", name: "交際", icon: "wine" },
+  { id: "beauty", name: "美容", icon: "bath" },
+  { id: "other", name: "その他", icon: "receipt" },
+];
+
+const SAVE_KEY = "tsumori-cash:v1";
+const SCHEMA = 1;
+
+const seed = () => ({
+  v: SCHEMA,
+  settings: { theme: "midnight" },
+  cats: DEFAULT_CATS,
+  txns: [],
+  rules: [
+    { id: uid(), name: "ファミマのコーヒー", assumed: 250, actual: 50, icon: "coffee" },
+    { id: uid(), name: "コンビニ弁当→自炊", assumed: 600, actual: 250, icon: "utensils" },
+    { id: uid(), name: "自販機→水筒", assumed: 160, actual: 0, icon: "coffee" },
+  ],
+  saves: [],       // つもり貯金ログ {id,name,assumed,actual,saved,date,createdAt}
+  rewards: [
+    { id: uid(), name: "喫茶店へ行く権利", price: 1000, icon: "coffee" },
+    { id: uid(), name: "好きな本を1冊", price: 1500, icon: "book" },
+  ],
+  redeems: [],     // 交換履歴 {id,rewardId,name,price,date,createdAt}
+});
+
+const migrate = (d) => {
+  if (!d || typeof d !== "object") return seed();
+  const base = seed();
+  return {
+    ...base, ...d, v: SCHEMA,
+    settings: { ...base.settings, ...(d.settings || {}) },
+    cats: Array.isArray(d.cats) && d.cats.length ? d.cats : base.cats,
+    txns: Array.isArray(d.txns) ? d.txns : [],
+    rules: Array.isArray(d.rules) ? d.rules : [],
+    saves: Array.isArray(d.saves) ? d.saves : [],
+    rewards: Array.isArray(d.rewards) ? d.rewards : [],
+    redeems: Array.isArray(d.redeems) ? d.redeems : [],
+  };
+};
+const load = () => { try { const r = localStorage.getItem(SAVE_KEY); return r ? migrate(JSON.parse(r)) : seed(); } catch (e) { return seed(); } };
+const save = (obj) => { try { localStorage.setItem(SAVE_KEY, JSON.stringify(obj)); } catch (e) {} };
+
+// =================================================================
+function App() {
+  const [data, setData] = useState(load);
+  const [tab, setTab] = useState("home");
+  const [modal, setModal] = useState(null); // {type, ...}
+  useEffect(() => { save(data); }, [data]);
+
+  const T = resolveSkin(data.settings.theme);
+  useEffect(() => { document.querySelector('meta[name=theme-color]')?.setAttribute("content", T.bg); document.body.style.background = T.bg; document.body.style.fontFamily = T.font; }, [data.settings.theme]);
+  const s = styles(T);
+  const cycleSkin = (dir = 1) => { const keys = Object.keys(SKINS); const i = keys.indexOf(data.settings.theme); const next = keys[(i + dir + keys.length) % keys.length]; setData((d) => ({ ...d, settings: { ...d.settings, theme: next } })); buzz(6); };
+
+  // ---- 派生値 ----
+  const balance = useMemo(() =>
+    data.saves.reduce((a, x) => a + x.saved, 0) - data.redeems.reduce((a, x) => a + x.price, 0),
+    [data.saves, data.redeems]);
+  const catOf = (id) => data.cats.find((c) => c.id === id);
+  const update = (fn) => setData((d) => fn({ ...d }));
+
+  // ---- 操作 ----
+  const addTxn = (t) => update((d) => ({ ...d, txns: [{ id: uid(), createdAt: Date.now(), satisfaction: 0, ...t }, ...d.txns] }));
+  const setSatisfaction = (id, v) => update((d) => ({ ...d, txns: d.txns.map((t) => t.id === id ? { ...t, satisfaction: t.satisfaction === v ? 0 : v } : t) }));
+  const delTxn = (id) => update((d) => ({ ...d, txns: d.txns.filter((t) => t.id !== id) }));
+
+  const logSave = (rule, actualOverride) => {
+    const actual = actualOverride != null ? actualOverride : rule.actual;
+    const saved = Math.max(0, rule.assumed - actual);
+    update((d) => ({ ...d, saves: [{ id: uid(), createdAt: Date.now(), name: rule.name, assumed: rule.assumed, actual, saved, date: todayISO() }, ...d.saves] }));
+    buzz();
+  };
+  const delSave = (id) => update((d) => ({ ...d, saves: d.saves.filter((x) => x.id !== id) }));
+  const addRule = (r) => update((d) => ({ ...d, rules: [...d.rules, { id: uid(), ...r }] }));
+  const editRule = (id, r) => update((d) => ({ ...d, rules: d.rules.map((x) => x.id === id ? { ...x, ...r } : x) }));
+  const delRule = (id) => update((d) => ({ ...d, rules: d.rules.filter((x) => x.id !== id) }));
+
+  const addReward = (r) => update((d) => ({ ...d, rewards: [...d.rewards, { id: uid(), ...r }] }));
+  const editReward = (id, r) => update((d) => ({ ...d, rewards: d.rewards.map((x) => x.id === id ? { ...x, ...r } : x) }));
+  const delReward = (id) => update((d) => ({ ...d, rewards: d.rewards.filter((x) => x.id !== id) }));
+  const redeem = (rw) => { update((d) => ({ ...d, redeems: [{ id: uid(), createdAt: Date.now(), rewardId: rw.id, name: rw.name, price: rw.price, date: todayISO() }, ...d.redeems] })); buzz([10, 40, 20, 40, 80]); };
+
+  const shared = { data, setData, update, T, s, balance, catOf, modal, setModal, cycleSkin,
+    addTxn, setSatisfaction, delTxn, logSave, delSave, addRule, editRule, delRule, addReward, editReward, delReward, redeem };
+
+  return (
+    <div style={s.app}>
+      <div style={s.scroll}>
+        {tab === "home" && <HomeScreen {...shared} go={setTab} />}
+        {tab === "ledger" && <LedgerScreen {...shared} />}
+        {tab === "tsumori" && <TsumoriScreen {...shared} />}
+        {tab === "shop" && <ShopScreen {...shared} />}
+      </div>
+
+      {/* 中央の追加ボタン */}
+      <button style={s.fab} onClick={() => setModal({ type: tab === "tsumori" ? "save" : tab === "shop" ? "reward" : "txn" })} aria-label="追加">
+        <Plus size={26} color={T.onGold} strokeWidth={2.6} />
+      </button>
+
+      {/* ボトムナビ */}
+      <nav style={s.nav}>
+        <NavBtn s={s} T={T} active={tab === "home"} onClick={() => setTab("home")} icon={Home} label="ホーム" />
+        <NavBtn s={s} T={T} active={tab === "ledger"} onClick={() => setTab("ledger")} icon={Wallet} label="家計簿" />
+        <div style={{ width: 64 }} />
+        <NavBtn s={s} T={T} active={tab === "tsumori"} onClick={() => setTab("tsumori")} icon={PiggyBank} label="つもり" />
+        <NavBtn s={s} T={T} active={tab === "shop"} onClick={() => setTab("shop")} icon={Store} label="ご褒美" />
+      </nav>
+
+      {modal && <Modals {...shared} go={setTab} />}
+    </div>
+  );
+}
+
+function NavBtn({ s, T, active, onClick, icon: Icon, label }) {
+  return (
+    <button style={s.navBtn} onClick={onClick}>
+      <Icon size={21} color={active ? T.gold : T.lo} strokeWidth={active ? 2.5 : 2} />
+      <span style={{ ...s.navLabel, color: active ? T.hi : T.lo }}>{label}</span>
+    </button>
+  );
+}
+
+// ============================ ホーム ============================
+function HomeScreen({ data, T, s, balance, catOf, setModal, go, cycleSkin }) {
+  const mk = monthKey(todayISO());
+  const mTxns = data.txns.filter((t) => monthKey(t.date) === mk);
+  const expense = mTxns.filter((t) => t.type !== "income").reduce((a, t) => a + t.amount, 0);
+  const income = mTxns.filter((t) => t.type === "income").reduce((a, t) => a + t.amount, 0);
+  const mSaves = data.saves.filter((x) => monthKey(x.date) === mk).reduce((a, x) => a + x.saved, 0);
+  const rated = mTxns.filter((t) => t.satisfaction > 0);
+  const avgSat = rated.length ? (rated.reduce((a, t) => a + t.satisfaction, 0) / rated.length) : 0;
+
+  // 次のご褒美（残高で買えそうな一番近いもの）
+  const nextReward = [...data.rewards].sort((a, b) => a.price - b.price).find((r) => r.price > balance) || [...data.rewards].sort((a, b) => b.price - a.price)[0];
+  const prog = nextReward ? Math.min(1, balance / nextReward.price) : 0;
+
+  return (
+    <div style={s.page}>
+      <header style={s.appHead}>
+        <div>
+          <div style={s.appTitle}>つもりキャッシュ</div>
+          <div style={s.appSub}>{fmtMonth(mk)}</div>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 2 }}>
+          <button style={s.skinBtn} onClick={() => cycleSkin(1)} aria-label="デザインを変える"><Palette size={18} color={T.gold} /><span style={s.skinName}>{(SKINS[data.settings.theme] || SKINS.midnight).name}</span></button>
+          <button style={s.iconBtn} onClick={() => setModal({ type: "settings" })} aria-label="設定"><Settings size={20} color={T.lo} /></button>
+        </div>
+      </header>
+
+      {/* 貯金残高ヒーロー */}
+      <div style={s.hero}>
+        <div style={s.heroGlow} />
+        <div style={s.heroRow}>
+          <PiggyBank size={26} color={T.gold} strokeWidth={2} />
+          <span style={s.heroLabel}>つもり貯金 残高</span>
+        </div>
+        <div style={s.heroAmt}>{yen(balance)}</div>
+        {nextReward && (
+          <div style={{ marginTop: 14 }}>
+            <div style={s.progLabelRow}>
+              <span style={{ color: T.lo, fontSize: 12 }}>次のご褒美「{nextReward.name}」まで</span>
+              <span style={{ color: T.hi, fontSize: 12, fontWeight: 700 }}>{prog >= 1 ? "達成！" : yen(Math.max(0, nextReward.price - balance))}</span>
+            </div>
+            <div style={s.progTrack}><div style={{ ...s.progFill, width: `${prog * 100}%` }} /></div>
+          </div>
+        )}
+      </div>
+
+      {/* 今月サマリー */}
+      <div style={s.row3}>
+        <Stat s={s} T={T} label="今月の支出" value={yen(expense)} color={T.neg} icon={TrendingDown} />
+        <Stat s={s} T={T} label="今月の収入" value={yen(income)} color={T.pos} icon={TrendingUp} />
+        <Stat s={s} T={T} label="今月つもり貯金" value={yen(mSaves)} color={T.gold} icon={PiggyBank} />
+      </div>
+
+      {/* クイック */}
+      <div style={s.quickRow}>
+        <button style={{ ...s.quickBtn, borderColor: T.neg + "55" }} onClick={() => setModal({ type: "txn" })}>
+          <Receipt size={18} color={T.neg} /> <span>支出を記録</span>
+        </button>
+        <button style={{ ...s.quickBtn, borderColor: T.gold + "55" }} onClick={() => setModal({ type: "save" })}>
+          <PiggyBank size={18} color={T.gold} /> <span>つもり貯金</span>
+        </button>
+      </div>
+
+      {/* 満足度ふりかえり */}
+      <SectionTitle s={s} T={T}>今月のふりかえり</SectionTitle>
+      <div style={s.card}>
+        {rated.length === 0 ? (
+          <div style={s.empty}>支出に★で満足度をつけると、{"\n"}お金の使い方を振り返れます。</div>
+        ) : (
+          <>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <span style={{ color: T.lo, fontSize: 13 }}>満足度の平均（{rated.length}件）</span>
+              <Stars value={Math.round(avgSat)} T={T} size={18} />
+            </div>
+            <div style={{ height: 1, background: T.line, margin: "12px 0" }} />
+            {(() => {
+              const best = [...rated].sort((a, b) => b.satisfaction - a.satisfaction)[0];
+              const worst = [...rated].sort((a, b) => a.satisfaction - b.satisfaction)[0];
+              return (
+                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                  <ReflectRow s={s} T={T} tag="満足度◎" tagColor={T.pos} txn={best} catOf={catOf} />
+                  {worst.id !== best.id && <ReflectRow s={s} T={T} tag="見直したい" tagColor={T.neg} txn={worst} catOf={catOf} />}
+                </div>
+              );
+            })()}
+          </>
+        )}
+      </div>
+
+      <SectionTitle s={s} T={T}>最近の記録</SectionTitle>
+      <div style={s.card}>
+        {data.txns.length === 0 ? <div style={s.empty}>まだ記録がありません。{"\n"}下の＋から最初の支出を記録しましょう。</div> :
+          data.txns.slice(0, 5).map((t) => <TxnRow key={t.id} t={t} s={s} T={T} catOf={catOf} compact />)}
+        {data.txns.length > 5 && <button style={s.moreBtn} onClick={() => go("ledger")}>家計簿をすべて見る <ChevronRight size={15} color={T.lo} /></button>}
+      </div>
+      <div style={{ height: 24 }} />
+    </div>
+  );
+}
+
+function ReflectRow({ s, T, tag, tagColor, txn, catOf }) {
+  const c = catOf(txn.category);
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+      <span style={{ ...s.pill, background: tagColor + "22", color: tagColor }}>{tag}</span>
+      <Ic name={c?.icon} size={16} color={T.lo} />
+      <span style={{ color: T.hi, fontSize: 14, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{txn.memo || c?.name || "支出"}</span>
+      <Stars value={txn.satisfaction} T={T} size={13} />
+      <span style={{ color: T.lo, fontSize: 13 }}>{yen(txn.amount)}</span>
+    </div>
+  );
+}
+
+function Stat({ s, T, label, value, color, icon: Icon }) {
+  return (
+    <div style={s.stat}>
+      <Icon size={16} color={color} />
+      <div style={s.statVal}>{value}</div>
+      <div style={s.statLabel}>{label}</div>
+    </div>
+  );
+}
+
+// ============================ 家計簿 ============================
+function LedgerScreen({ data, T, s, catOf, setSatisfaction, setModal }) {
+  const [mk, setMk] = useState(monthKey(todayISO()));
+  const months = useMemo(() => {
+    const set = new Set(data.txns.map((t) => monthKey(t.date)));
+    set.add(monthKey(todayISO()));
+    return [...set].sort().reverse();
+  }, [data.txns]);
+
+  const mTxns = data.txns.filter((t) => monthKey(t.date) === mk).sort((a, b) => b.date.localeCompare(a.date) || b.createdAt - a.createdAt);
+  const expense = mTxns.filter((t) => t.type !== "income").reduce((a, t) => a + t.amount, 0);
+  const income = mTxns.filter((t) => t.type === "income").reduce((a, t) => a + t.amount, 0);
+
+  // 日付ごとにグループ化
+  const groups = useMemo(() => {
+    const g = {};
+    mTxns.forEach((t) => { (g[t.date] = g[t.date] || []).push(t); });
+    return Object.entries(g);
+  }, [mTxns]);
+
+  // カテゴリ内訳
+  const byCat = useMemo(() => {
+    const m = {};
+    mTxns.filter((t) => t.type !== "income").forEach((t) => { m[t.category] = (m[t.category] || 0) + t.amount; });
+    return Object.entries(m).sort((a, b) => b[1] - a[1]);
+  }, [mTxns]);
+
+  return (
+    <div style={s.page}>
+      <header style={s.appHead}><div style={s.appTitle}>家計簿</div></header>
+
+      <div style={s.monthRow}>
+        {months.map((m) => (
+          <button key={m} style={{ ...s.monthChip, ...(m === mk ? s.monthChipOn(T) : {}) }} onClick={() => setMk(m)}>{fmtMonth(m)}</button>
+        ))}
+      </div>
+
+      <div style={s.row2}>
+        <div style={{ ...s.stat, flex: 1 }}><TrendingDown size={16} color={T.neg} /><div style={s.statVal}>{yen(expense)}</div><div style={s.statLabel}>支出</div></div>
+        <div style={{ ...s.stat, flex: 1 }}><TrendingUp size={16} color={T.pos} /><div style={s.statVal}>{yen(income)}</div><div style={s.statLabel}>収入</div></div>
+        <div style={{ ...s.stat, flex: 1 }}><Wallet size={16} color={T.hi} /><div style={{ ...s.statVal, color: income - expense >= 0 ? T.pos : T.neg }}>{yen(income - expense)}</div><div style={s.statLabel}>収支</div></div>
+      </div>
+
+      {byCat.length > 0 && (
+        <>
+          <SectionTitle s={s} T={T}>カテゴリ内訳</SectionTitle>
+          <div style={s.card}>
+            {byCat.map(([cid, amt]) => {
+              const c = catOf(cid); const pct = expense ? amt / expense : 0;
+              return (
+                <div key={cid} style={{ marginBottom: 10 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 5 }}>
+                    <Ic name={c?.icon} size={15} color={T.gold} />
+                    <span style={{ color: T.hi, fontSize: 13, flex: 1 }}>{c?.name || "その他"}</span>
+                    <span style={{ color: T.lo, fontSize: 12 }}>{Math.round(pct * 100)}%</span>
+                    <span style={{ color: T.hi, fontSize: 13, fontWeight: 700, minWidth: 64, textAlign: "right" }}>{yen(amt)}</span>
+                  </div>
+                  <div style={s.progTrack}><div style={{ ...s.progFill, width: `${pct * 100}%` }} /></div>
+                </div>
+              );
+            })}
+          </div>
+        </>
+      )}
+
+      <SectionTitle s={s} T={T}>記録（★で満足度）</SectionTitle>
+      {groups.length === 0 ? <div style={s.card}><div style={s.empty}>この月の記録はありません。</div></div> :
+        groups.map(([date, list]) => (
+          <div key={date} style={{ marginBottom: 14 }}>
+            <div style={s.dateHead}>{fmtDate(date)}（{["日","月","火","水","木","金","土"][new Date(date).getDay()]}）</div>
+            <div style={s.card}>
+              {list.map((t) => <TxnRow key={t.id} t={t} s={s} T={T} catOf={catOf} onRate={(v) => setSatisfaction(t.id, v)} onTap={() => setModal({ type: "txnDetail", id: t.id })} />)}
+            </div>
+          </div>
+        ))}
+      <div style={{ height: 24 }} />
+    </div>
+  );
+}
+
+function TxnRow({ t, s, T, catOf, onRate, onTap, compact }) {
+  const c = catOf(t.category);
+  const isInc = t.type === "income";
+  return (
+    <div style={s.txnRow}>
+      <div style={{ ...s.txnIcon, background: (isInc ? T.pos : T.gold) + "1E" }} onClick={onTap}>
+        <Ic name={isInc ? "coins" : c?.icon} size={17} color={isInc ? T.pos : T.gold} />
+      </div>
+      <div style={{ flex: 1, minWidth: 0 }} onClick={onTap}>
+        <div style={{ color: T.hi, fontSize: 14, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.memo || c?.name || (isInc ? "収入" : "支出")}</div>
+        {!compact && !isInc && <div style={{ marginTop: 3 }}><Stars value={t.satisfaction} T={T} size={15} onRate={onRate} /></div>}
+        {compact && <div style={{ color: T.lo, fontSize: 11 }}>{fmtDate(t.date)} · {c?.name}</div>}
+      </div>
+      <div style={{ color: isInc ? T.pos : T.hi, fontSize: 15, fontWeight: 700, whiteSpace: "nowrap" }}>{isInc ? "+" : ""}{yen(t.amount)}</div>
+    </div>
+  );
+}
+
+function Stars({ value, T, size = 16, onRate }) {
+  return (
+    <div style={{ display: "inline-flex", gap: 2 }}>
+      {[1, 2, 3, 4, 5].map((n) => (
+        <span key={n} onClick={onRate ? (e) => { e.stopPropagation(); onRate(n); } : undefined} style={{ cursor: onRate ? "pointer" : "default", lineHeight: 0, padding: onRate ? 1 : 0 }}>
+          <Star size={size} color={n <= value ? T.gold : T.lo} fill={n <= value ? T.gold : "none"} strokeWidth={2} style={{ opacity: n <= value ? 1 : 0.4 }} />
+        </span>
+      ))}
+    </div>
+  );
+}
+
+// ============================ つもり貯金 ============================
+function TsumoriScreen({ data, T, s, balance, logSave, delSave, setModal }) {
+  const recent = data.saves.slice(0, 30);
+  const total = data.saves.reduce((a, x) => a + x.saved, 0);
+
+  return (
+    <div style={s.page}>
+      <header style={s.appHead}><div style={s.appTitle}>つもり貯金</div></header>
+
+      <div style={s.hero}>
+        <div style={s.heroGlow} />
+        <div style={s.heroRow}><PiggyBank size={24} color={T.gold} strokeWidth={2} /><span style={s.heroLabel}>使える残高</span></div>
+        <div style={s.heroAmt}>{yen(balance)}</div>
+        <div style={{ color: T.lo, fontSize: 12, marginTop: 6 }}>これまで貯めた合計 {yen(total)}</div>
+      </div>
+
+      <SectionTitle s={s} T={T}>つもりルール（タップで記録）</SectionTitle>
+      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        {data.rules.map((r) => (
+          <button key={r.id} style={s.ruleCard} onClick={() => logSave(r)}>
+            <div style={{ ...s.txnIcon, background: T.gold + "1E" }}><Ic name={r.icon} size={18} color={T.gold} /></div>
+            <div style={{ flex: 1, minWidth: 0, textAlign: "left" }}>
+              <div style={{ color: T.hi, fontSize: 14, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.name}</div>
+              <div style={{ color: T.lo, fontSize: 12 }}>{yen(r.assumed)} → {yen(r.actual)}</div>
+            </div>
+            <div style={{ textAlign: "right" }}>
+              <div style={{ color: T.gold, fontSize: 16, fontWeight: 800 }}>+{yen(Math.max(0, r.assumed - r.actual))}</div>
+              <div style={{ color: T.lo, fontSize: 11 }}>貯金する</div>
+            </div>
+          </button>
+        ))}
+        <button style={s.dashedBtn} onClick={() => setModal({ type: "rule" })}><Plus size={16} color={T.lo} /> つもりルールを追加</button>
+      </div>
+
+      <SectionTitle s={s} T={T}>貯金の記録</SectionTitle>
+      <div style={s.card}>
+        {recent.length === 0 ? <div style={s.empty}>上のルールをタップすると、{"\n"}差額がここに貯まっていきます。</div> :
+          recent.map((x) => (
+            <div key={x.id} style={s.txnRow}>
+              <div style={{ ...s.txnIcon, background: T.gold + "1E" }}><PiggyBank size={16} color={T.gold} /></div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ color: T.hi, fontSize: 14, fontWeight: 600 }}>{x.name}</div>
+                <div style={{ color: T.lo, fontSize: 11 }}>{fmtDate(x.date)} · {yen(x.assumed)}→{yen(x.actual)}</div>
+              </div>
+              <div style={{ color: T.gold, fontSize: 15, fontWeight: 700 }}>+{yen(x.saved)}</div>
+              <button style={s.delMini} onClick={() => delSave(x.id)} aria-label="削除"><X size={14} color={T.lo} /></button>
+            </div>
+          ))}
+      </div>
+      <div style={{ height: 24 }} />
+    </div>
+  );
+}
+
+// ============================ ご褒美ショップ ============================
+function ShopScreen({ data, T, s, balance, redeem, delReward, setModal }) {
+  const [confirm, setConfirm] = useState(null);
+  return (
+    <div style={s.page}>
+      <header style={s.appHead}><div style={s.appTitle}>ご褒美ショップ</div></header>
+
+      <div style={s.shopBalance}>
+        <Coins size={18} color={T.gold} />
+        <span style={{ color: T.lo, fontSize: 13 }}>使えるつもり貯金</span>
+        <span style={{ color: T.hi, fontSize: 18, fontWeight: 800, marginLeft: "auto" }}>{yen(balance)}</span>
+      </div>
+
+      <SectionTitle s={s} T={T}>ほしいご褒美</SectionTitle>
+      <div style={s.rewardGrid}>
+        {data.rewards.map((r) => {
+          const ok = balance >= r.price;
+          return (
+            <div key={r.id} style={s.rewardCard}>
+              <button style={s.delCorner} onClick={() => setModal({ type: "reward", id: r.id })} aria-label="編集"><Pencil size={13} color={T.lo} /></button>
+              <div style={{ ...s.rewardIcon, background: T.gold + "18" }}><Ic name={r.icon} size={26} color={T.gold} /></div>
+              <div style={s.rewardName}>{r.name}</div>
+              <div style={{ color: T.gold, fontSize: 16, fontWeight: 800, marginBottom: 8 }}>{yen(r.price)}</div>
+              <button disabled={!ok} style={{ ...s.redeemBtn, ...(ok ? s.redeemOn(T) : s.redeemOff(T)) }} onClick={() => ok && setConfirm(r)}>
+                {ok ? <><Gift size={15} /> 交換する</> : `あと ${yen(r.price - balance)}`}
+              </button>
+            </div>
+          );
+        })}
+        <button style={s.rewardAdd} onClick={() => setModal({ type: "reward" })}><Plus size={22} color={T.lo} /><span style={{ color: T.lo, fontSize: 13, marginTop: 6 }}>ご褒美を追加</span></button>
+      </div>
+
+      {data.redeems.length > 0 && (
+        <>
+          <SectionTitle s={s} T={T}>交換した履歴</SectionTitle>
+          <div style={s.card}>
+            {data.redeems.slice(0, 20).map((x) => (
+              <div key={x.id} style={s.txnRow}>
+                <div style={{ ...s.txnIcon, background: T.pos + "1E" }}><Gift size={16} color={T.pos} /></div>
+                <div style={{ flex: 1 }}><div style={{ color: T.hi, fontSize: 14, fontWeight: 600 }}>{x.name}</div><div style={{ color: T.lo, fontSize: 11 }}>{fmtDate(x.date)}</div></div>
+                <div style={{ color: T.lo, fontSize: 14, fontWeight: 700 }}>-{yen(x.price)}</div>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+      <div style={{ height: 24 }} />
+
+      {confirm && (
+        <div style={s.overlay} onClick={() => setConfirm(null)}>
+          <div style={s.confirmBox} onClick={(e) => e.stopPropagation()}>
+            <div style={{ ...s.rewardIcon, background: T.gold + "18", margin: "0 auto 14px" }}><Ic name={confirm.icon} size={30} color={T.gold} /></div>
+            <div style={{ color: T.hi, fontSize: 17, fontWeight: 700, textAlign: "center" }}>「{confirm.name}」と交換しますか？</div>
+            <div style={{ color: T.lo, fontSize: 13, textAlign: "center", margin: "8px 0 18px" }}>{yen(confirm.price)} を使います</div>
+            <div style={{ display: "flex", gap: 10 }}>
+              <button style={s.btnGhost} onClick={() => setConfirm(null)}>やめる</button>
+              <button style={s.btnGold} onClick={() => { redeem(confirm); setConfirm(null); }}>交換する</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ============================ モーダル群 ============================
+function Modals(props) {
+  const { modal } = props;
+  const close = () => props.setModal(null);
+  return (
+    <div style={props.s.overlay} onClick={close}>
+      <div style={props.s.sheet} onClick={(e) => e.stopPropagation()}>
+        {modal.type === "txn" && <TxnForm {...props} close={close} />}
+        {modal.type === "txnDetail" && <TxnForm {...props} close={close} editId={modal.id} />}
+        {modal.type === "save" && <SaveForm {...props} close={close} />}
+        {modal.type === "rule" && <RuleForm {...props} close={close} />}
+        {modal.type === "reward" && <RewardForm {...props} close={close} editId={modal.id} />}
+        {modal.type === "settings" && <SettingsForm {...props} close={close} />}
+      </div>
+    </div>
+  );
+}
+
+function Field({ s, T, label, children }) {
+  return <div style={{ marginBottom: 16 }}><div style={s.fieldLabel}>{label}</div>{children}</div>;
+}
+function NumInput({ s, value, onChange, placeholder }) {
+  return <input style={s.input} inputMode="numeric" pattern="[0-9]*" value={value} placeholder={placeholder}
+    onChange={(e) => onChange(e.target.value.replace(/[^0-9]/g, ""))} />;
+}
+function IconPicker({ s, T, value, onChange }) {
+  return (
+    <div style={s.iconGrid}>
+      {ICON_KEYS.map((k) => (
+        <button key={k} onClick={() => onChange(k)} style={{ ...s.iconCell, ...(value === k ? { background: T.gold + "26", borderColor: T.gold } : {}) }}>
+          <Ic name={k} size={19} color={value === k ? T.gold : T.lo} />
+        </button>
+      ))}
+    </div>
+  );
+}
+
+// 支出/収入フォーム
+function TxnForm({ s, T, data, addTxn, delTxn, setSatisfaction, close, editId }) {
+  const edit = editId ? data.txns.find((t) => t.id === editId) : null;
+  const [type, setType] = useState(edit?.type || "expense");
+  const [amount, setAmount] = useState(edit ? String(edit.amount) : "");
+  const [category, setCategory] = useState(edit?.category || data.cats[0].id);
+  const [memo, setMemo] = useState(edit?.memo || "");
+  const [date, setDate] = useState(edit?.date || todayISO());
+
+  const submit = () => {
+    const amt = parseInt(amount, 10);
+    if (!amt) return;
+    if (edit) { delTxn(edit.id); }
+    addTxn({ type, amount: amt, category, memo: memo.trim(), date, satisfaction: edit?.satisfaction || 0 });
+    close();
+  };
+
+  return (
+    <>
+      <SheetHead s={s} T={T} title={edit ? "記録を編集" : "記録する"} close={close} onDelete={edit ? () => { delTxn(edit.id); close(); } : null} />
+      <div style={s.segRow}>
+        <button style={{ ...s.seg, ...(type === "expense" ? s.segOn(T, T.neg) : {}) }} onClick={() => setType("expense")}>支出</button>
+        <button style={{ ...s.seg, ...(type === "income" ? s.segOn(T, T.pos) : {}) }} onClick={() => setType("income")}>収入</button>
+      </div>
+      <Field s={s} T={T} label="金額">
+        <div style={s.amtWrap}><span style={s.yenMark}>¥</span><input autoFocus style={s.amtInput} inputMode="numeric" pattern="[0-9]*" value={amount} placeholder="0" onChange={(e) => setAmount(e.target.value.replace(/[^0-9]/g, ""))} /></div>
+      </Field>
+      {type === "expense" && (
+        <Field s={s} T={T} label="カテゴリ">
+          <div style={s.catGrid}>
+            {data.cats.map((c) => (
+              <button key={c.id} style={{ ...s.catChip, ...(category === c.id ? { background: T.gold + "20", borderColor: T.gold, color: T.hi } : {}) }} onClick={() => setCategory(c.id)}>
+                <Ic name={c.icon} size={15} color={category === c.id ? T.gold : T.lo} /> {c.name}
+              </button>
+            ))}
+          </div>
+        </Field>
+      )}
+      <Field s={s} T={T} label="メモ"><input style={s.input} value={memo} placeholder={type === "income" ? "給料 など" : "ファミマ など"} onChange={(e) => setMemo(e.target.value)} /></Field>
+      <Field s={s} T={T} label="日付"><input type="date" style={s.input} value={date} onChange={(e) => setDate(e.target.value)} /></Field>
+      {edit && type === "expense" && (
+        <Field s={s} T={T} label="満足度（このお金の使い方は？）">
+          <div style={{ padding: "4px 0" }}><Stars value={edit.satisfaction} T={T} size={30} onRate={(v) => setSatisfaction(edit.id, v)} /></div>
+        </Field>
+      )}
+      <button style={{ ...s.btnGold, width: "100%", opacity: amount ? 1 : 0.5 }} onClick={submit}>{edit ? "保存する" : "記録する"}</button>
+    </>
+  );
+}
+
+// つもり貯金フォーム（ルール選択 or 自由入力）
+function SaveForm({ s, T, data, logSave, setModal, close }) {
+  const [name, setName] = useState("");
+  const [assumed, setAssumed] = useState("");
+  const [actual, setActual] = useState("");
+  const saved = Math.max(0, (parseInt(assumed, 10) || 0) - (parseInt(actual, 10) || 0));
+
+  const submitFree = () => {
+    const a = parseInt(assumed, 10);
+    if (!a || !name.trim()) return;
+    logSave({ name: name.trim(), assumed: a, actual: parseInt(actual, 10) || 0, icon: "coins" });
+    close();
+  };
+
+  return (
+    <>
+      <SheetHead s={s} T={T} title="つもり貯金する" close={close} />
+      {data.rules.length > 0 && (
+        <>
+          <div style={s.fieldLabel}>ルールから選ぶ</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 18 }}>
+            {data.rules.map((r) => (
+              <button key={r.id} style={s.ruleCard} onClick={() => { logSave(r); close(); }}>
+                <div style={{ ...s.txnIcon, background: T.gold + "1E" }}><Ic name={r.icon} size={17} color={T.gold} /></div>
+                <div style={{ flex: 1, textAlign: "left" }}><div style={{ color: T.hi, fontSize: 14, fontWeight: 600 }}>{r.name}</div><div style={{ color: T.lo, fontSize: 12 }}>{yen(r.assumed)} → {yen(r.actual)}</div></div>
+                <div style={{ color: T.gold, fontSize: 15, fontWeight: 800 }}>+{yen(Math.max(0, r.assumed - r.actual))}</div>
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+      <div style={{ height: 1, background: T.line, margin: "4px 0 18px" }} />
+      <div style={s.fieldLabel}>その場で入力する</div>
+      <Field s={s} T={T} label="内容"><input style={s.input} value={name} placeholder="例：スタバ→自宅コーヒー" onChange={(e) => setName(e.target.value)} /></Field>
+      <div style={{ display: "flex", gap: 10 }}>
+        <Field s={s} T={T} label="本当は使う額"><NumInput s={s} value={assumed} onChange={setAssumed} placeholder="500" /></Field>
+        <Field s={s} T={T} label="実際に使った額"><NumInput s={s} value={actual} onChange={setActual} placeholder="100" /></Field>
+      </div>
+      <div style={s.savedPreview}>貯まる額 <b style={{ color: T.gold, fontSize: 20 }}>+{yen(saved)}</b></div>
+      <button style={{ ...s.btnGold, width: "100%", opacity: (assumed && name.trim()) ? 1 : 0.5 }} onClick={submitFree}>貯金する</button>
+    </>
+  );
+}
+
+// つもりルール追加
+function RuleForm({ s, T, addRule, close }) {
+  const [name, setName] = useState("");
+  const [assumed, setAssumed] = useState("");
+  const [actual, setActual] = useState("");
+  const [icon, setIcon] = useState("coffee");
+  const submit = () => { const a = parseInt(assumed, 10); if (!a || !name.trim()) return; addRule({ name: name.trim(), assumed: a, actual: parseInt(actual, 10) || 0, icon }); close(); };
+  return (
+    <>
+      <SheetHead s={s} T={T} title="つもりルールを追加" close={close} />
+      <Field s={s} T={T} label="名前"><input autoFocus style={s.input} value={name} placeholder="例：ファミマのコーヒー" onChange={(e) => setName(e.target.value)} /></Field>
+      <div style={{ display: "flex", gap: 10 }}>
+        <Field s={s} T={T} label="想定額（いつもの額）"><NumInput s={s} value={assumed} onChange={setAssumed} placeholder="250" /></Field>
+        <Field s={s} T={T} label="代替額（節約後）"><NumInput s={s} value={actual} onChange={setActual} placeholder="50" /></Field>
+      </div>
+      <Field s={s} T={T} label="アイコン"><IconPicker s={s} T={T} value={icon} onChange={setIcon} /></Field>
+      <button style={{ ...s.btnGold, width: "100%", opacity: (assumed && name.trim()) ? 1 : 0.5 }} onClick={submit}>追加する</button>
+    </>
+  );
+}
+
+// ご褒美 追加/編集
+function RewardForm({ s, T, data, addReward, editReward, delReward, close, editId }) {
+  const edit = editId ? data.rewards.find((r) => r.id === editId) : null;
+  const [name, setName] = useState(edit?.name || "");
+  const [price, setPrice] = useState(edit ? String(edit.price) : "");
+  const [icon, setIcon] = useState(edit?.icon || "gift");
+  const submit = () => { const p = parseInt(price, 10); if (!p || !name.trim()) return; if (edit) editReward(edit.id, { name: name.trim(), price: p, icon }); else addReward({ name: name.trim(), price: p, icon }); close(); };
+  return (
+    <>
+      <SheetHead s={s} T={T} title={edit ? "ご褒美を編集" : "ご褒美を追加"} close={close} onDelete={edit ? () => { delReward(edit.id); close(); } : null} />
+      <Field s={s} T={T} label="ご褒美の名前"><input autoFocus style={s.input} value={name} placeholder="例：喫茶店へ行く権利" onChange={(e) => setName(e.target.value)} /></Field>
+      <Field s={s} T={T} label="必要なつもり貯金"><NumInput s={s} value={price} onChange={setPrice} placeholder="1000" /></Field>
+      <Field s={s} T={T} label="アイコン"><IconPicker s={s} T={T} value={icon} onChange={setIcon} /></Field>
+      <button style={{ ...s.btnGold, width: "100%", opacity: (price && name.trim()) ? 1 : 0.5 }} onClick={submit}>{edit ? "保存する" : "追加する"}</button>
+    </>
+  );
+}
+
+// 設定
+function SettingsForm({ s, T, data, setData, close }) {
+  const exportData = () => {
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob); const a = document.createElement("a");
+    a.href = url; a.download = `tsumori-cash-${todayISO()}.json`; a.click(); URL.revokeObjectURL(url);
+  };
+  const importData = (e) => {
+    const f = e.target.files?.[0]; if (!f) return;
+    const r = new FileReader(); r.onload = () => { try { setData(migrate(JSON.parse(r.result))); close(); } catch (err) { alert("読み込みに失敗しました"); } }; r.readAsText(f);
+  };
+  return (
+    <>
+      <SheetHead s={s} T={T} title="設定" close={close} />
+      <Field s={s} T={T} label={`デザイン（${Object.keys(SKINS).length}パターン）`}>
+        <div style={s.skinGrid}>
+          {Object.entries(SKINS).map(([k, sk]) => {
+            const p = sk.pal, on = data.settings.theme === k;
+            const swatchBg = p.card.startsWith("rgba") ? p.bg : p.card;
+            return (
+              <button key={k} onClick={() => { setData((d) => ({ ...d, settings: { ...d.settings, theme: k } })); buzz(6); }}
+                style={{ padding: 0, background: p.bg, border: `2px solid ${on ? p.gold : T.line}`, borderRadius: 14, overflow: "hidden", cursor: "pointer", textAlign: "left" }}>
+                <div style={{ padding: "12px 12px 10px" }}>
+                  {/* ミニプレビュー：残高カードとボタンの見立て */}
+                  <div style={{ background: swatchBg, border: `1px solid ${p.line}`, borderRadius: 8, padding: "8px 9px", marginBottom: 7 }}>
+                    <div style={{ height: 5, width: "55%", background: p.lo, borderRadius: 3, opacity: 0.6 }} />
+                    <div style={{ height: 9, width: "75%", background: p.hi, borderRadius: 3, margin: "6px 0 8px" }} />
+                    <div style={{ display: "flex", gap: 5 }}>
+                      <div style={{ flex: 1, height: 14, background: p.gold, borderRadius: 5 }} />
+                      <div style={{ width: 14, height: 14, background: p.card2, border: `1px solid ${p.line}`, borderRadius: 5 }} />
+                    </div>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                    <span style={{ color: p.hi, fontSize: 13, fontWeight: 700 }}>{sk.name}</span>
+                    {on && <Check size={15} color={p.gold} strokeWidth={3} />}
+                  </div>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+        <div style={{ color: T.lo, fontSize: 11, marginTop: 8, lineHeight: 1.6 }}>ホーム右上の🎨ボタンでも次々切り替えて見比べられます。</div>
+      </Field>
+      <Field s={s} T={T} label="データ（端末内に保存されています）">
+        <div style={{ display: "flex", gap: 10 }}>
+          <button style={{ ...s.btnGhost, flex: 1 }} onClick={exportData}><Download size={16} /> 書き出し</button>
+          <label style={{ ...s.btnGhost, flex: 1, cursor: "pointer" }}><Upload size={16} /> 読み込み<input type="file" accept="application/json" style={{ display: "none" }} onChange={importData} /></label>
+        </div>
+      </Field>
+      <button style={{ ...s.btnGhost, width: "100%", color: T.neg, borderColor: T.neg + "55" }}
+        onClick={() => { if (confirm("すべてのデータを消去します。よろしいですか？")) { setData(seed()); close(); } }}>
+        <Trash2 size={16} /> すべてのデータを消去
+      </button>
+      <div style={{ color: T.lo, fontSize: 11, textAlign: "center", marginTop: 16, lineHeight: 1.7 }}>つもりキャッシュ v1{"\n"}データはこの端末のブラウザ内だけに保存されます。{"\n"}機種変更の前は「書き出し」でバックアップを。</div>
+    </>
+  );
+}
+
+function SheetHead({ s, T, title, close, onDelete }) {
+  return (
+    <div style={s.sheetHead}>
+      <div style={s.sheetTitle}>{title}</div>
+      <div style={{ display: "flex", gap: 6 }}>
+        {onDelete && <button style={s.iconBtn} onClick={onDelete} aria-label="削除"><Trash2 size={18} color={T.neg} /></button>}
+        <button style={s.iconBtn} onClick={close} aria-label="閉じる"><X size={20} color={T.lo} /></button>
+      </div>
+    </div>
+  );
+}
+
+function SectionTitle({ s, T, children }) { return <div style={s.sectionTitle}>{children}</div>; }
+
+function buzz(p = 12) { try { navigator.vibrate?.(p); } catch (e) {} }
+
+// ============================ スタイル ============================
+function styles(T) {
+  const PAD = 16;
+  const R = T.R;
+  // カード状の面（質感はスキンの surface に従う）
+  const cardFace = { background: T.cardBg, border: T.bd, boxShadow: T.elev, backdropFilter: T.glass, WebkitBackdropFilter: T.glass };
+  return {
+    app: { height: "100%", display: "flex", flexDirection: "column", background: T.bg, color: T.hi, maxWidth: 560, margin: "0 auto", position: "relative", fontFamily: T.font },
+    scroll: { flex: 1, overflowY: "auto", WebkitOverflowScrolling: "touch", paddingBottom: 96 },
+    page: { padding: `max(12px, env(safe-area-inset-top)) ${PAD}px 0` },
+    appHead: { display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 0 16px" },
+    appTitle: { fontSize: 22, fontWeight: 800, letterSpacing: 0.5 },
+    appSub: { fontSize: 13, color: T.lo, marginTop: 2 },
+    iconBtn: { background: "none", border: "none", padding: 8, cursor: "pointer", display: "flex", borderRadius: R.btn },
+    skinBtn: { display: "flex", alignItems: "center", gap: 5, padding: "6px 11px", background: T.cardBg, border: T.bd, borderRadius: R.chip, cursor: "pointer", color: T.hi },
+    skinName: { fontSize: 12, fontWeight: 700, color: T.hi },
+
+    hero: { ...cardFace, position: "relative", borderRadius: R.hero, padding: 22, overflow: "hidden" },
+    heroGlow: { position: "absolute", top: -60, right: -40, width: 180, height: 180, borderRadius: "50%", background: `radial-gradient(circle, ${T.gold}${T.glow ? "55" : "33"}, transparent 70%)` },
+    heroRow: { display: "flex", alignItems: "center", gap: 8, position: "relative" },
+    heroLabel: { color: T.lo, fontSize: 13, fontWeight: 600 },
+    heroAmt: { fontSize: 40, fontWeight: 900, marginTop: 6, letterSpacing: -1, position: "relative", textShadow: T.glow ? `0 0 18px ${T.gold}66` : "none" },
+    progLabelRow: { display: "flex", justifyContent: "space-between", marginBottom: 6 },
+    progTrack: { height: 8, background: T.card2, borderRadius: 8, overflow: "hidden" },
+    progFill: { height: "100%", background: `linear-gradient(90deg, ${T.gold}, ${T.gold}cc)`, borderRadius: 8, transition: "width .4s ease", boxShadow: T.glow ? `0 0 10px ${T.gold}` : "none" },
+
+    row3: { display: "flex", gap: 10, marginTop: 12 },
+    row2: { display: "flex", gap: 10, marginTop: 4 },
+    stat: { ...cardFace, flex: 1, borderRadius: R.card, padding: "12px 10px", display: "flex", flexDirection: "column", gap: 5 },
+    statVal: { fontSize: 16, fontWeight: 800, color: T.hi },
+    statLabel: { fontSize: 11, color: T.lo },
+
+    quickRow: { display: "flex", gap: 10, marginTop: 12 },
+    quickBtn: { ...cardFace, flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "14px 0", borderRadius: R.btn, color: T.hi, fontSize: 14, fontWeight: 700, cursor: "pointer" },
+
+    sectionTitle: { fontSize: 13, fontWeight: 700, color: T.lo, margin: "22px 2px 10px", letterSpacing: 0.3 },
+    card: { ...cardFace, borderRadius: R.card, padding: 14 },
+    empty: { color: T.lo, fontSize: 13, textAlign: "center", padding: "18px 0", whiteSpace: "pre-wrap", lineHeight: 1.7 },
+    moreBtn: { width: "100%", marginTop: 8, padding: "10px 0", background: "none", border: "none", color: T.lo, fontSize: 13, fontWeight: 600, display: "flex", alignItems: "center", justifyContent: "center", gap: 4, cursor: "pointer", fontFamily: T.font },
+    pill: { fontSize: 10, fontWeight: 800, padding: "2px 7px", borderRadius: R.pill, whiteSpace: "nowrap" },
+
+    txnRow: { display: "flex", alignItems: "center", gap: 11, padding: "9px 0" },
+    txnIcon: { width: 38, height: 38, borderRadius: R.icon, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, cursor: "pointer" },
+    dateHead: { fontSize: 12, fontWeight: 700, color: T.lo, margin: "0 2px 6px" },
+    delMini: { background: "none", border: "none", padding: 6, cursor: "pointer", display: "flex", borderRadius: 8, flexShrink: 0 },
+
+    monthRow: { display: "flex", gap: 8, overflowX: "auto", paddingBottom: 12, marginBottom: 4 },
+    monthChip: { ...cardFace, flexShrink: 0, padding: "7px 13px", borderRadius: R.chip, color: T.lo, fontSize: 13, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap" },
+    monthChipOn: (T) => ({ background: T.gold, color: T.onGold, borderColor: T.gold, boxShadow: "none" }),
+
+    ruleCard: { ...cardFace, display: "flex", alignItems: "center", gap: 11, padding: 12, borderRadius: R.card, cursor: "pointer", width: "100%", fontFamily: T.font },
+    dashedBtn: { display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: 13, background: "none", border: `1.5px dashed ${T.line}`, borderRadius: R.card, color: T.lo, fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: T.font },
+
+    shopBalance: { ...cardFace, display: "flex", alignItems: "center", gap: 8, borderRadius: R.card, padding: "14px 16px" },
+    rewardGrid: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 },
+    rewardCard: { ...cardFace, position: "relative", borderRadius: R.card, padding: 14, display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center" },
+    rewardIcon: { width: 56, height: 56, borderRadius: R.icon + 4, display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 10 },
+    rewardName: { color: T.hi, fontSize: 14, fontWeight: 700, marginBottom: 4, lineHeight: 1.35, minHeight: 38, display: "flex", alignItems: "center" },
+    redeemBtn: { width: "100%", padding: "9px 0", borderRadius: R.btn, fontSize: 13, fontWeight: 700, border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 5, fontFamily: T.font },
+    redeemOn: (T) => ({ background: T.gold, color: T.onGold, boxShadow: T.glow ? `0 0 14px ${T.gold}88` : "none" }),
+    redeemOff: (T) => ({ background: T.card2, color: T.lo, cursor: "default" }),
+    delCorner: { position: "absolute", top: 8, right: 8, background: "none", border: "none", padding: 5, cursor: "pointer", display: "flex", borderRadius: 8, zIndex: 2 },
+    rewardAdd: { background: "none", border: `1.5px dashed ${T.line}`, borderRadius: R.card, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", cursor: "pointer", minHeight: 150, fontFamily: T.font },
+
+    // FAB / nav
+    fab: { position: "absolute", bottom: 30, left: "50%", transform: "translateX(-50%)", width: 60, height: 60, borderRadius: 30, background: T.gold, border: `4px solid ${T.bg}`, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", boxShadow: `0 6px 20px ${T.gold}${T.glow ? "aa" : "55"}`, zIndex: 20 },
+    nav: { display: "flex", alignItems: "center", justifyContent: "space-around", background: T.cardBg, backdropFilter: T.glass, WebkitBackdropFilter: T.glass, borderTop: `1px solid ${T.line}`, padding: "8px 4px calc(8px + env(safe-area-inset-bottom))", position: "sticky", bottom: 0 },
+    navBtn: { background: "none", border: "none", display: "flex", flexDirection: "column", alignItems: "center", gap: 3, padding: "4px 14px", cursor: "pointer", flex: 1, fontFamily: T.font },
+    navLabel: { fontSize: 10, fontWeight: 600 },
+
+    // モーダル
+    overlay: { position: "fixed", inset: 0, background: T.scrim, display: "flex", alignItems: "flex-end", justifyContent: "center", zIndex: 40, backdropFilter: "blur(3px)" },
+    sheet: { width: "100%", maxWidth: 560, maxHeight: "92vh", overflowY: "auto", background: T.modal, borderRadius: `${R.sheet}px ${R.sheet}px 0 0`, padding: `20px ${PAD}px calc(28px + env(safe-area-inset-bottom))`, boxShadow: "0 -10px 40px rgba(0,0,0,0.4)", fontFamily: T.font },
+    sheetHead: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 18 },
+    sheetTitle: { fontSize: 18, fontWeight: 800 },
+    confirmBox: { background: T.modal, borderRadius: R.card, padding: 24, marginBottom: "30vh", alignSelf: "center", width: "88%", maxWidth: 360, fontFamily: T.font },
+
+    fieldLabel: { fontSize: 12, fontWeight: 700, color: T.lo, marginBottom: 7 },
+    input: { width: "100%", padding: "12px 14px", background: T.card2, border: `1px solid ${T.line}`, borderRadius: R.btn, color: T.hi, fontSize: 15, outline: "none", fontFamily: T.font },
+    amtWrap: { display: "flex", alignItems: "center", background: T.card2, border: `1px solid ${T.line}`, borderRadius: R.btn, padding: "4px 14px" },
+    yenMark: { color: T.lo, fontSize: 24, fontWeight: 700, marginRight: 4 },
+    amtInput: { flex: 1, background: "none", border: "none", color: T.hi, fontSize: 32, fontWeight: 800, outline: "none", padding: "8px 0", width: "100%", fontFamily: T.font },
+
+    segRow: { display: "flex", gap: 8, background: T.card2, borderRadius: R.btn, padding: 4, marginBottom: 18 },
+    seg: { flex: 1, padding: "10px 0", borderRadius: Math.max(6, R.btn - 3), background: "none", border: "none", color: T.lo, fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: T.font },
+    segOn: (T, c) => ({ background: T.modal, color: c, boxShadow: "0 1px 4px rgba(0,0,0,0.2)" }),
+
+    catGrid: { display: "flex", flexWrap: "wrap", gap: 8 },
+    catChip: { display: "flex", alignItems: "center", gap: 5, padding: "8px 12px", borderRadius: R.chip, background: T.card2, border: `1px solid ${T.line}`, color: T.lo, fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: T.font },
+
+    iconGrid: { display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 7 },
+    iconCell: { aspectRatio: "1", display: "flex", alignItems: "center", justifyContent: "center", background: T.card2, border: `1px solid ${T.line}`, borderRadius: R.icon, cursor: "pointer" },
+
+    savedPreview: { textAlign: "center", padding: "12px 0", marginBottom: 16, background: T.card2, borderRadius: R.btn, color: T.lo, fontSize: 14, fontWeight: 600 },
+
+    btnGold: { padding: "14px 0", background: T.gold, color: T.onGold, border: "none", borderRadius: R.btn, fontSize: 15, fontWeight: 800, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6, fontFamily: T.font, boxShadow: T.glow ? `0 0 16px ${T.gold}77` : "none" },
+    btnGhost: { padding: "13px 0", background: T.card2, color: T.hi, border: `1px solid ${T.line}`, borderRadius: R.btn, fontSize: 14, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6, fontFamily: T.font },
+
+    // 設定: スキンプレビュー
+    skinGrid: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 },
+  };
+}
+
+createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>
