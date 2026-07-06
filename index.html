@@ -32,7 +32,7 @@
 import React from "https://esm.sh/react@18.3.1";
 import { createRoot } from "https://esm.sh/react-dom@18.3.1/client";
 import { useState, useEffect, useMemo } from "https://esm.sh/react@18.3.1";
-import { PiggyBank, Wallet, Store, Home, Plus, X, Coffee, Utensils, ShoppingBag, Bus, Gamepad2, Heart, Sparkles, Settings, Download, Upload, Trash2, Check, Star, TrendingUp, TrendingDown, Gift, Pencil, ChevronRight, Bath, BookOpen, Wine, Cigarette, Smartphone, Plane, Shirt, Receipt, Coins, ArrowLeft, Cake, Music, Dumbbell, Car, Pizza, IceCream, Beer, GraduationCap, Palette } from "https://esm.sh/lucide-react@0.383.0?deps=react@18.3.1";
+import { PiggyBank, Wallet, Store, Home, Plus, X, Coffee, Utensils, ShoppingBag, Bus, Gamepad2, Heart, Sparkles, Settings, Download, Upload, Trash2, Check, Star, TrendingUp, TrendingDown, Gift, Pencil, ChevronRight, Bath, BookOpen, Wine, Cigarette, Smartphone, Plane, Shirt, Receipt, Coins, ArrowLeft, Cake, Music, Dumbbell, Car, Pizza, IceCream, Beer, GraduationCap, Palette, ListChecks, ShoppingCart } from "https://esm.sh/lucide-react@0.383.0?deps=react@18.3.1";
 
 /* ============================================================
    つもりキャッシュ — つもり貯金 × 家計簿 × ご褒美 × 満足度
@@ -51,7 +51,7 @@ const ICONS = {
   coffee: Coffee, utensils: Utensils, pizza: Pizza, icecream: IceCream, cake: Cake, beer: Beer, wine: Wine,
   shopping: ShoppingBag, shirt: Shirt, bus: Bus, car: Car, plane: Plane, game: Gamepad2, music: Music,
   book: BookOpen, dumbbell: Dumbbell, bath: Bath, phone: Smartphone, cig: Cigarette, heart: Heart,
-  gift: Gift, star: Star, sparkles: Sparkles, coins: Coins, receipt: Receipt, school: GraduationCap, store: Store,
+  gift: Gift, star: Star, sparkles: Sparkles, coins: Coins, receipt: Receipt, school: GraduationCap, store: Store, cart: ShoppingCart,
 };
 const Ic = ({ name, ...p }) => { const C = ICONS[name] || Receipt; return <C {...p} />; };
 const ICON_KEYS = Object.keys(ICONS);
@@ -139,6 +139,7 @@ const seed = () => ({
     { id: uid(), name: "好きな本を1冊", price: 1500, icon: "book" },
   ],
   redeems: [],     // 交換履歴 {id,rewardId,name,price,date,createdAt}
+  shopping: [],    // 買い物リスト {id,name,price,category,icon,status:"open"|"bought"|"skipped",createdAt,doneDate}
 });
 
 const migrate = (d) => {
@@ -153,6 +154,7 @@ const migrate = (d) => {
     saves: Array.isArray(d.saves) ? d.saves : [],
     rewards: Array.isArray(d.rewards) ? d.rewards : [],
     redeems: Array.isArray(d.redeems) ? d.redeems : [],
+    shopping: Array.isArray(d.shopping) ? d.shopping : [],
   };
 };
 const load = () => { try { const r = localStorage.getItem(SAVE_KEY); return r ? migrate(JSON.parse(r)) : seed(); } catch (e) { return seed(); } };
@@ -198,20 +200,32 @@ function App() {
   const delReward = (id) => update((d) => ({ ...d, rewards: d.rewards.filter((x) => x.id !== id) }));
   const redeem = (rw) => { update((d) => ({ ...d, redeems: [{ id: uid(), createdAt: Date.now(), rewardId: rw.id, name: rw.name, price: rw.price, date: todayISO() }, ...d.redeems] })); buzz([10, 40, 20, 40, 80]); };
 
+  // ---- 買い物リスト ----
+  const addShopItem = (it) => update((d) => ({ ...d, shopping: [{ id: uid(), createdAt: Date.now(), status: "open", ...it }, ...d.shopping] }));
+  const editShopItem = (id, patch) => update((d) => ({ ...d, shopping: d.shopping.map((x) => x.id === id ? { ...x, ...patch } : x) }));
+  const delShopItem = (id) => update((d) => ({ ...d, shopping: d.shopping.filter((x) => x.id !== id) }));
+  const markBought = (id) => update((d) => ({ ...d, shopping: d.shopping.map((x) => x.id === id ? { ...x, status: "bought", doneDate: todayISO() } : x) }));
+  const skipShopItem = (it) => {
+    logSave({ name: it.name, assumed: it.price, actual: 0, icon: it.icon || "cart" });
+    update((d) => ({ ...d, shopping: d.shopping.map((x) => x.id === it.id ? { ...x, status: "skipped", doneDate: todayISO() } : x) }));
+  };
+
   const shared = { data, setData, update, T, s, balance, catOf, modal, setModal, cycleSkin,
-    addTxn, setSatisfaction, delTxn, logSave, delSave, addRule, editRule, delRule, addReward, editReward, delReward, redeem };
+    addTxn, setSatisfaction, delTxn, logSave, delSave, addRule, editRule, delRule, addReward, editReward, delReward, redeem,
+    addShopItem, editShopItem, delShopItem, markBought, skipShopItem };
 
   return (
     <div style={s.app}>
       <div style={s.scroll}>
         {tab === "home" && <HomeScreen {...shared} go={setTab} />}
         {tab === "ledger" && <LedgerScreen {...shared} />}
+        {tab === "list" && <ShoppingScreen {...shared} />}
         {tab === "tsumori" && <TsumoriScreen {...shared} />}
         {tab === "shop" && <ShopScreen {...shared} />}
       </div>
 
-      {/* 中央の追加ボタン */}
-      <button style={s.fab} onClick={() => setModal({ type: tab === "tsumori" ? "save" : tab === "shop" ? "reward" : "txn" })} aria-label="追加">
+      {/* 追加ボタン */}
+      <button style={s.fab} onClick={() => setModal({ type: tab === "tsumori" ? "save" : tab === "shop" ? "reward" : tab === "list" ? "shopItem" : "txn" })} aria-label="追加">
         <Plus size={26} color={T.onGold} strokeWidth={2.6} />
       </button>
 
@@ -219,7 +233,7 @@ function App() {
       <nav style={s.nav}>
         <NavBtn s={s} T={T} active={tab === "home"} onClick={() => setTab("home")} icon={Home} label="ホーム" />
         <NavBtn s={s} T={T} active={tab === "ledger"} onClick={() => setTab("ledger")} icon={Wallet} label="家計簿" />
-        <div style={{ width: 64 }} />
+        <NavBtn s={s} T={T} active={tab === "list"} onClick={() => setTab("list")} icon={ListChecks} label="リスト" />
         <NavBtn s={s} T={T} active={tab === "tsumori"} onClick={() => setTab("tsumori")} icon={PiggyBank} label="つもり" />
         <NavBtn s={s} T={T} active={tab === "shop"} onClick={() => setTab("shop")} icon={Store} label="ご褒美" />
       </nav>
@@ -590,6 +604,75 @@ function ShopScreen({ data, T, s, balance, redeem, delReward, setModal }) {
   );
 }
 
+// ============================ 買い物リスト ============================
+function ShoppingScreen({ data, T, s, catOf, setModal, skipShopItem, delShopItem }) {
+  const open = data.shopping.filter((x) => x.status === "open");
+  const done = data.shopping.filter((x) => x.status !== "open").slice(0, 30);
+  const estTotal = open.reduce((a, x) => a + (x.price || 0), 0);
+
+  return (
+    <div style={s.page}>
+      <header style={s.appHead}><div style={s.appTitle}>買い物リスト</div></header>
+
+      <div style={s.shopBalance}>
+        <ListChecks size={18} color={T.gold} />
+        <span style={{ color: T.lo, fontSize: 13 }}>買う予定 {open.length}件</span>
+        <span style={{ color: T.hi, fontSize: 18, fontWeight: 800, marginLeft: "auto" }}>{yen(estTotal)}</span>
+      </div>
+
+      <SectionTitle s={s} T={T}>買う予定のもの</SectionTitle>
+      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        {open.length === 0 && <div style={s.card}><div style={s.empty}>リストは空です。{"\n"}＋から買いたいものを追加しましょう。{"\n"}買う前にリストに入れて一晩おくと、{"\n"}「本当に欲しいか」が見えてきます。</div></div>}
+        {open.map((it) => {
+          const c = catOf(it.category);
+          return (
+            <div key={it.id} style={{ ...s.card, padding: 12 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 11, cursor: "pointer" }} onClick={() => setModal({ type: "shopItem", id: it.id })}>
+                <div style={{ ...s.txnIcon, background: T.gold + "1E" }}><Ic name={it.icon || c?.icon || "cart"} size={17} color={T.gold} /></div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ color: T.hi, fontSize: 14, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{it.name}</div>
+                  <div style={{ color: T.lo, fontSize: 11 }}>{c?.name || "カテゴリなし"}{it.price ? ` · 予算 ${yen(it.price)}` : " · 予算未設定"}</div>
+                </div>
+                <Pencil size={14} color={T.lo} />
+              </div>
+              <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+                <button style={{ ...s.btnGhost, flex: 1, padding: "10px 0", fontSize: 13 }}
+                  onClick={() => setModal({ type: "txn", prefill: { amount: it.price || 0, category: it.category, memo: it.name }, shoppingId: it.id })}>
+                  <Receipt size={15} /> 買った
+                </button>
+                <button style={{ ...s.btnGhost, flex: 1, padding: "10px 0", fontSize: 13, color: T.gold, borderColor: T.gold + "66" }}
+                  onClick={() => { if (it.price) { skipShopItem(it); } else { setModal({ type: "shopItem", id: it.id, needPrice: true }); } }}>
+                  <PiggyBank size={15} /> 我慢して貯金
+                </button>
+              </div>
+            </div>
+          );
+        })}
+        <button style={s.dashedBtn} onClick={() => setModal({ type: "shopItem" })}><Plus size={16} color={T.lo} /> 買いたいものを追加</button>
+      </div>
+
+      {done.length > 0 && (
+        <>
+          <SectionTitle s={s} T={T}>済んだもの</SectionTitle>
+          <div style={s.card}>
+            {done.map((x) => (
+              <div key={x.id} style={s.txnRow}>
+                <span style={{ ...s.pill, background: (x.status === "skipped" ? T.gold : T.pos) + "22", color: x.status === "skipped" ? T.gold : T.pos }}>{x.status === "skipped" ? "我慢" : "買った"}</span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ color: T.hi, fontSize: 14, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{x.name}</div>
+                  <div style={{ color: T.lo, fontSize: 11 }}>{x.doneDate ? fmtDate(x.doneDate) : ""}{x.price ? ` · ${yen(x.price)}` : ""}</div>
+                </div>
+                <button style={s.delMini} onClick={() => delShopItem(x.id)} aria-label="削除"><X size={14} color={T.lo} /></button>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+      <div style={{ height: 24 }} />
+    </div>
+  );
+}
+
 // ============================ モーダル群 ============================
 function Modals(props) {
   const { modal } = props;
@@ -602,6 +685,7 @@ function Modals(props) {
         {modal.type === "save" && <SaveForm {...props} close={close} />}
         {modal.type === "rule" && <RuleForm {...props} close={close} />}
         {modal.type === "reward" && <RewardForm {...props} close={close} editId={modal.id} />}
+        {modal.type === "shopItem" && <ShopItemForm {...props} close={close} editId={modal.id} needPrice={modal.needPrice} />}
         {modal.type === "settings" && <SettingsForm {...props} close={close} />}
       </div>
     </div>
@@ -628,12 +712,13 @@ function IconPicker({ s, T, value, onChange }) {
 }
 
 // 支出/収入フォーム
-function TxnForm({ s, T, data, addTxn, delTxn, setSatisfaction, close, editId }) {
+function TxnForm({ s, T, data, addTxn, delTxn, setSatisfaction, close, editId, modal, markBought }) {
   const edit = editId ? data.txns.find((t) => t.id === editId) : null;
+  const pre = !edit ? modal?.prefill : null;
   const [type, setType] = useState(edit?.type || "expense");
-  const [amount, setAmount] = useState(edit ? String(edit.amount) : "");
-  const [category, setCategory] = useState(edit?.category || data.cats[0].id);
-  const [memo, setMemo] = useState(edit?.memo || "");
+  const [amount, setAmount] = useState(edit ? String(edit.amount) : (pre?.amount ? String(pre.amount) : ""));
+  const [category, setCategory] = useState(edit?.category || pre?.category || data.cats[0].id);
+  const [memo, setMemo] = useState(edit?.memo || pre?.memo || "");
   const [date, setDate] = useState(edit?.date || todayISO());
 
   const submit = () => {
@@ -641,6 +726,7 @@ function TxnForm({ s, T, data, addTxn, delTxn, setSatisfaction, close, editId })
     if (!amt) return;
     if (edit) { delTxn(edit.id); }
     addTxn({ type, amount: amt, category, memo: memo.trim(), date, satisfaction: edit?.satisfaction || 0 });
+    if (modal?.shoppingId) markBought(modal.shoppingId);
     close();
   };
 
@@ -756,6 +842,41 @@ function RewardForm({ s, T, data, addReward, editReward, delReward, close, editI
       <Field s={s} T={T} label="必要なつもり貯金"><NumInput s={s} value={price} onChange={setPrice} placeholder="1000" /></Field>
       <Field s={s} T={T} label="アイコン"><IconPicker s={s} T={T} value={icon} onChange={setIcon} /></Field>
       <button style={{ ...s.btnGold, width: "100%", opacity: (price && name.trim()) ? 1 : 0.5 }} onClick={submit}>{edit ? "保存する" : "追加する"}</button>
+    </>
+  );
+}
+
+// 買い物リスト 追加/編集
+function ShopItemForm({ s, T, data, addShopItem, editShopItem, delShopItem, close, editId, needPrice }) {
+  const edit = editId ? data.shopping.find((x) => x.id === editId) : null;
+  const [name, setName] = useState(edit?.name || "");
+  const [price, setPrice] = useState(edit?.price ? String(edit.price) : "");
+  const [category, setCategory] = useState(edit?.category || data.cats[0].id);
+  const [icon, setIcon] = useState(edit?.icon || "cart");
+  const submit = () => {
+    if (!name.trim()) return;
+    const p = parseInt(price, 10) || 0;
+    const item = { name: name.trim(), price: p || null, category, icon };
+    if (edit) editShopItem(edit.id, item); else addShopItem(item);
+    close();
+  };
+  return (
+    <>
+      <SheetHead s={s} T={T} title={edit ? "リストを編集" : "買いたいものを追加"} close={close} onDelete={edit ? () => { delShopItem(edit.id); close(); } : null} />
+      {needPrice && <div style={{ ...s.savedPreview, color: T.gold, marginBottom: 14 }}>我慢して貯金するには予算の入力が必要です</div>}
+      <Field s={s} T={T} label="名前"><input autoFocus={!edit} style={s.input} value={name} placeholder="例：新しいイヤホン" onChange={(e) => setName(e.target.value)} /></Field>
+      <Field s={s} T={T} label="予算（我慢したらこの額がつもり貯金に）"><NumInput s={s} value={price} onChange={setPrice} placeholder="3000" /></Field>
+      <Field s={s} T={T} label="カテゴリ">
+        <div style={s.catGrid}>
+          {data.cats.map((c) => (
+            <button key={c.id} style={{ ...s.catChip, ...(category === c.id ? { background: T.gold + "20", borderColor: T.gold, color: T.hi } : {}) }} onClick={() => setCategory(c.id)}>
+              <Ic name={c.icon} size={15} color={category === c.id ? T.gold : T.lo} /> {c.name}
+            </button>
+          ))}
+        </div>
+      </Field>
+      <Field s={s} T={T} label="アイコン"><IconPicker s={s} T={T} value={icon} onChange={setIcon} /></Field>
+      <button style={{ ...s.btnGold, width: "100%", opacity: name.trim() ? 1 : 0.5 }} onClick={submit}>{edit ? "保存する" : "追加する"}</button>
     </>
   );
 }
@@ -899,9 +1020,9 @@ function styles(T) {
     rewardAdd: { background: "none", border: `1.5px dashed ${T.line}`, borderRadius: R.card, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", cursor: "pointer", minHeight: 150, fontFamily: T.font },
 
     // FAB / nav
-    fab: { position: "absolute", bottom: 30, left: "50%", transform: "translateX(-50%)", width: 60, height: 60, borderRadius: 30, background: T.gold, border: `4px solid ${T.bg}`, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", boxShadow: `0 6px 20px ${T.gold}${T.glow ? "aa" : "55"}`, zIndex: 20 },
+    fab: { position: "absolute", bottom: "calc(84px + env(safe-area-inset-bottom))", right: 16, width: 58, height: 58, borderRadius: 29, background: T.gold, border: `3px solid ${T.bg}`, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", boxShadow: `0 6px 20px ${T.gold}${T.glow ? "aa" : "55"}`, zIndex: 20 },
     nav: { display: "flex", alignItems: "center", justifyContent: "space-around", background: T.cardBg, backdropFilter: T.glass, WebkitBackdropFilter: T.glass, borderTop: `1px solid ${T.line}`, padding: "8px 4px calc(8px + env(safe-area-inset-bottom))", position: "sticky", bottom: 0 },
-    navBtn: { background: "none", border: "none", display: "flex", flexDirection: "column", alignItems: "center", gap: 3, padding: "4px 14px", cursor: "pointer", flex: 1, fontFamily: T.font },
+    navBtn: { background: "none", border: "none", display: "flex", flexDirection: "column", alignItems: "center", gap: 3, padding: "4px 4px", cursor: "pointer", flex: 1, fontFamily: T.font },
     navLabel: { fontSize: 10, fontWeight: 600 },
 
     // モーダル
