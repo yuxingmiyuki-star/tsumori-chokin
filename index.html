@@ -32,7 +32,7 @@
 import React from "https://esm.sh/react@18.3.1";
 import { createRoot } from "https://esm.sh/react-dom@18.3.1/client";
 import { useState, useEffect, useMemo } from "https://esm.sh/react@18.3.1";
-import { PiggyBank, Wallet, Store, Home, Plus, X, Coffee, Utensils, ShoppingBag, Bus, Gamepad2, Heart, Sparkles, Settings, Download, Upload, Trash2, Check, Star, TrendingUp, TrendingDown, Gift, Pencil, ChevronRight, Bath, BookOpen, Wine, Cigarette, Smartphone, Plane, Shirt, Receipt, Coins, ArrowLeft, Cake, Music, Dumbbell, Car, Pizza, IceCream, Beer, GraduationCap, Palette, ListChecks, ShoppingCart } from "https://esm.sh/lucide-react@0.383.0?deps=react@18.3.1";
+import { PiggyBank, Wallet, Store, Home, Plus, X, Coffee, Utensils, ShoppingBag, Bus, Gamepad2, Heart, Sparkles, Settings, Download, Upload, Trash2, Check, Star, TrendingUp, TrendingDown, Gift, Pencil, ChevronRight, ChevronLeft, Bath, BookOpen, Wine, Cigarette, Smartphone, Plane, Shirt, Receipt, Coins, ArrowLeft, Cake, Music, Dumbbell, Car, Pizza, IceCream, Beer, GraduationCap, Palette, ListChecks, ShoppingCart } from "https://esm.sh/lucide-react@0.383.0?deps=react@18.3.1";
 
 /* ============================================================
    つもりキャッシュ — つもり貯金 × 家計簿 × ご褒美 × 満足度
@@ -45,6 +45,9 @@ const todayISO = () => { const d = new Date(); return new Date(d.getTime() - d.g
 const monthKey = (iso) => (iso || todayISO()).slice(0, 7);
 const fmtDate = (iso) => { const [y, m, d] = iso.split("-"); return `${+m}/${+d}`; };
 const fmtMonth = (mk) => { const [y, m] = mk.split("-"); return `${y}年${+m}月`; };
+const shiftMonth = (mk, delta) => { const [y, m] = mk.split("-").map(Number); const d = new Date(y, m - 1 + delta, 1); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`; };
+// カレンダーのマス用に金額を短く（1万以上は「万」表記）
+const yenCell = (n) => { if (!n) return ""; if (n >= 10000) { const v = n / 10000; return (Math.round(v * 10) / 10).toString().replace(/\.0$/, "") + "万"; } return n.toLocaleString("ja-JP"); };
 
 // アイコン：保存はキー文字列で行う（関数はJSON化できないため）
 const ICONS = {
@@ -387,17 +390,53 @@ function Stat({ s, T, label, value, color, icon: Icon }) {
 }
 
 // ============================ 家計簿 ============================
+function MonthCalendar({ s, T, mk, onPrev, onNext, dayExp, dayInc, onDay }) {
+  const [y, m] = mk.split("-").map(Number);
+  const firstDow = new Date(y, m - 1, 1).getDay();
+  const days = new Date(y, m, 0).getDate();
+  const todayStr = todayISO();
+  const dow = ["日", "月", "火", "水", "木", "金", "土"];
+  const cells = [];
+  for (let i = 0; i < firstDow; i++) cells.push(null);
+  for (let d = 1; d <= days; d++) cells.push(d);
+  return (
+    <div style={s.calCard}>
+      <div style={s.calHead}>
+        <button style={s.calNav} onClick={onPrev} aria-label="前の月"><ChevronLeft size={20} color={T.hi} /></button>
+        <div style={s.calTitle}>{fmtMonth(mk)}</div>
+        <button style={s.calNav} onClick={onNext} aria-label="次の月"><ChevronRight size={20} color={T.hi} /></button>
+      </div>
+      <div style={s.calGrid}>
+        {dow.map((w, i) => <div key={w} style={{ ...s.calDow, color: i === 0 ? T.neg : T.lo }}>{w}</div>)}
+        {cells.map((d, i) => {
+          if (d === null) return <div key={"e" + i} />;
+          const ds = `${mk}-${String(d).padStart(2, "0")}`;
+          const isToday = ds === todayStr;
+          const exp = dayExp[d] || 0;
+          const inc = dayInc[d] || 0;
+          return (
+            <button key={d} style={{ ...s.calCell, ...(isToday ? s.calCellToday(T) : {}) }} onClick={() => onDay(ds)}>
+              <span style={{ ...s.calDay, color: isToday ? T.gold : (i % 7 === 0 ? T.neg : T.hi) }}>{d}</span>
+              {exp > 0 && <span style={s.calAmt}>{yenCell(exp)}</span>}
+              {inc > 0 && <span style={s.calDot(T)} />}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function LedgerScreen({ data, T, s, catOf, setSatisfaction, setModal }) {
   const [mk, setMk] = useState(monthKey(todayISO()));
-  const months = useMemo(() => {
-    const set = new Set(data.txns.map((t) => monthKey(t.date)));
-    set.add(monthKey(todayISO()));
-    return [...set].sort().reverse();
-  }, [data.txns]);
 
   const mTxns = data.txns.filter((t) => monthKey(t.date) === mk).sort((a, b) => b.date.localeCompare(a.date) || b.createdAt - a.createdAt);
   const expense = mTxns.filter((t) => t.type !== "income").reduce((a, t) => a + t.amount, 0);
   const income = mTxns.filter((t) => t.type === "income").reduce((a, t) => a + t.amount, 0);
+
+  // カレンダー用：日ごとの支出/収入合計
+  const dayExp = {}, dayInc = {};
+  mTxns.forEach((t) => { const d = +t.date.split("-")[2]; if (t.type === "income") dayInc[d] = (dayInc[d] || 0) + t.amount; else dayExp[d] = (dayExp[d] || 0) + t.amount; });
 
   // 日付ごとにグループ化
   const groups = useMemo(() => {
@@ -417,11 +456,11 @@ function LedgerScreen({ data, T, s, catOf, setSatisfaction, setModal }) {
     <div style={s.page}>
       <header style={s.appHead}><div style={s.appTitle}>家計簿</div></header>
 
-      <div style={s.monthRow}>
-        {months.map((m) => (
-          <button key={m} style={{ ...s.monthChip, ...(m === mk ? s.monthChipOn(T) : {}) }} onClick={() => setMk(m)}>{fmtMonth(m)}</button>
-        ))}
-      </div>
+      <MonthCalendar s={s} T={T} mk={mk}
+        onPrev={() => setMk((k) => shiftMonth(k, -1))}
+        onNext={() => setMk((k) => shiftMonth(k, 1))}
+        dayExp={dayExp} dayInc={dayInc}
+        onDay={(ds) => setModal({ type: "dayDetail", date: ds })} />
 
       <div style={s.row2}>
         <div style={{ ...s.stat, flex: 1 }}><TrendingDown size={16} color={T.neg} /><div style={s.statVal}>{yen(expense)}</div><div style={s.statLabel}>支出</div></div>
@@ -698,9 +737,31 @@ function Modals(props) {
         {modal.type === "rule" && <RuleForm {...props} close={close} />}
         {modal.type === "reward" && <RewardForm {...props} close={close} editId={modal.id} />}
         {modal.type === "shopItem" && <ShopItemForm {...props} close={close} editId={modal.id} needPrice={modal.needPrice} />}
+        {modal.type === "dayDetail" && <DayDetail {...props} close={close} date={modal.date} />}
         {modal.type === "settings" && <SettingsForm {...props} close={close} />}
       </div>
     </div>
+  );
+}
+
+function DayDetail({ s, T, data, catOf, setSatisfaction, setModal, close, date }) {
+  const list = data.txns.filter((t) => t.date === date).sort((a, b) => b.createdAt - a.createdAt);
+  const exp = list.filter((t) => t.type !== "income").reduce((a, t) => a + t.amount, 0);
+  const inc = list.filter((t) => t.type === "income").reduce((a, t) => a + t.amount, 0);
+  const [y, m, d] = date.split("-").map(Number);
+  const w = ["日", "月", "火", "水", "木", "金", "土"][new Date(y, m - 1, d).getDay()];
+  return (
+    <>
+      <SheetHead s={s} T={T} title={`${m}月${d}日（${w}）`} close={close} />
+      <div style={{ display: "flex", gap: 10, marginBottom: 16 }}>
+        <div style={{ ...s.stat, flex: 1 }}><TrendingDown size={16} color={T.neg} /><div style={s.statVal}>{yen(exp)}</div><div style={s.statLabel}>支出</div></div>
+        {inc > 0 && <div style={{ ...s.stat, flex: 1 }}><TrendingUp size={16} color={T.pos} /><div style={s.statVal}>{yen(inc)}</div><div style={s.statLabel}>収入</div></div>}
+      </div>
+      {list.length === 0
+        ? <div style={s.empty}>この日の記録はありません。</div>
+        : <div style={s.card}>{list.map((t) => <TxnRow key={t.id} t={t} s={s} T={T} catOf={catOf} onRate={(v) => setSatisfaction(t.id, v)} onTap={() => setModal({ type: "txnDetail", id: t.id })} />)}</div>}
+      <button style={{ ...s.btnGold, width: "100%", marginTop: 14 }} onClick={() => setModal({ type: "txn", prefill: { date } })}><Plus size={18} /> この日に記録を追加</button>
+    </>
   );
 }
 
@@ -731,7 +792,7 @@ function TxnForm({ s, T, data, addTxn, editTxn, delTxn, setSatisfaction, close, 
   const [amount, setAmount] = useState(edit ? String(edit.amount) : (pre?.amount ? String(pre.amount) : ""));
   const [category, setCategory] = useState(edit?.category || pre?.category || data.cats[0].id);
   const [memo, setMemo] = useState(edit?.memo || pre?.memo || "");
-  const [date, setDate] = useState(edit?.date || todayISO());
+  const [date, setDate] = useState(edit?.date || pre?.date || todayISO());
 
   const submit = () => {
     const amt = parseInt(amount, 10);
@@ -1019,6 +1080,19 @@ function styles(T) {
     monthRow: { display: "flex", gap: 8, overflowX: "auto", paddingBottom: 12, marginBottom: 4 },
     monthChip: { ...cardFace, flexShrink: 0, padding: "7px 13px", borderRadius: R.chip, color: T.lo, fontSize: 13, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap" },
     monthChipOn: (T) => ({ background: T.gold, color: T.onGold, borderColor: T.gold, boxShadow: "none" }),
+
+    // カレンダー
+    calCard: { ...cardFace, borderRadius: R.card, padding: "12px 10px 10px", marginBottom: 4 },
+    calHead: { display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 4px 10px" },
+    calNav: { background: "none", border: "none", padding: 6, cursor: "pointer", display: "flex", borderRadius: R.btn },
+    calTitle: { fontSize: 16, fontWeight: 800, color: T.hi, letterSpacing: 0.3 },
+    calGrid: { display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 3 },
+    calDow: { textAlign: "center", fontSize: 11, fontWeight: 700, paddingBottom: 4 },
+    calCell: { display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-start", minHeight: 46, padding: "4px 0 3px", borderRadius: Math.max(6, R.icon - 2), background: "none", border: "1px solid transparent", cursor: "pointer", fontFamily: T.font, gap: 1, overflow: "hidden" },
+    calCellToday: (T) => ({ background: T.gold + "18", borderColor: T.gold + "66" }),
+    calDay: { fontSize: 13, fontWeight: 600, lineHeight: 1.1 },
+    calAmt: { fontSize: 9, fontWeight: 600, color: T.lo, lineHeight: 1, whiteSpace: "nowrap", maxWidth: "100%", overflow: "hidden", textOverflow: "ellipsis" },
+    calDot: (T) => ({ width: 4, height: 4, borderRadius: "50%", background: T.pos, marginTop: 1 }),
 
     ruleCard: { ...cardFace, display: "flex", alignItems: "center", gap: 11, padding: 12, borderRadius: R.card, cursor: "pointer", width: "100%", fontFamily: T.font },
     dashedBtn: { display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: 13, background: "none", border: `1.5px dashed ${T.line}`, borderRadius: R.card, color: T.lo, fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: T.font },
