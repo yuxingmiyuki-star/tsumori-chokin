@@ -46,8 +46,8 @@ const monthKey = (iso) => (iso || todayISO()).slice(0, 7);
 const fmtDate = (iso) => { const [y, m, d] = iso.split("-"); return `${+m}/${+d}`; };
 const fmtMonth = (mk) => { const [y, m] = mk.split("-"); return `${y}年${+m}月`; };
 const shiftMonth = (mk, delta) => { const [y, m] = mk.split("-").map(Number); const d = new Date(y, m - 1 + delta, 1); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`; };
-// カレンダーのマス用に金額を短く（1万以上は「万」表記）
-const yenCell = (n) => { if (!n) return ""; if (n >= 10000) { const v = n / 10000; return (Math.round(v * 10) / 10).toString().replace(/\.0$/, "") + "万"; } return n.toLocaleString("ja-JP"); };
+// カレンダーのマス用の金額（円まで表示）
+const yenCell = (n) => (n ? n.toLocaleString("ja-JP") + "円" : "");
 
 // アイコン：保存はキー文字列で行う（関数はJSON化できないため）
 const ICONS = {
@@ -394,11 +394,15 @@ function MonthCalendar({ s, T, mk, onPrev, onNext, dayExp, dayInc, onDay }) {
   const [y, m] = mk.split("-").map(Number);
   const firstDow = new Date(y, m - 1, 1).getDay();
   const days = new Date(y, m, 0).getDate();
+  const prevDays = new Date(y, m - 1, 0).getDate();
   const todayStr = todayISO();
   const dow = ["日", "月", "火", "水", "木", "金", "土"];
+  const INC = "#3B82F6"; // 収入の青（参考画像に合わせて）
   const cells = [];
-  for (let i = 0; i < firstDow; i++) cells.push(null);
-  for (let d = 1; d <= days; d++) cells.push(d);
+  for (let i = 0; i < firstDow; i++) cells.push({ d: prevDays - firstDow + 1 + i, out: true });
+  for (let d = 1; d <= days; d++) cells.push({ d, out: false });
+  let nx = 1;
+  while (cells.length % 7 !== 0) cells.push({ d: nx++, out: true });
   return (
     <div style={s.calCard}>
       <div style={s.calHead}>
@@ -407,18 +411,21 @@ function MonthCalendar({ s, T, mk, onPrev, onNext, dayExp, dayInc, onDay }) {
         <button style={s.calNav} onClick={onNext} aria-label="次の月"><ChevronRight size={20} color={T.hi} /></button>
       </div>
       <div style={s.calGrid}>
-        {dow.map((w, i) => <div key={w} style={{ ...s.calDow, color: i === 0 ? T.neg : T.lo }}>{w}</div>)}
-        {cells.map((d, i) => {
-          if (d === null) return <div key={"e" + i} />;
-          const ds = `${mk}-${String(d).padStart(2, "0")}`;
+        {dow.map((w, i) => <div key={w} style={{ ...s.calDow, color: i === 0 ? T.neg : i === 6 ? INC : T.lo }}>{w}</div>)}
+        {cells.map((c, i) => {
+          const col = i % 7;
+          if (c.out) return <div key={"o" + i} style={s.calCellOut}><span style={{ ...s.calDay, color: T.lo, opacity: 0.35 }}>{c.d}</span></div>;
+          const ds = `${mk}-${String(c.d).padStart(2, "0")}`;
           const isToday = ds === todayStr;
-          const exp = dayExp[d] || 0;
-          const inc = dayInc[d] || 0;
+          const inc = dayInc[c.d] || 0;
+          const exp = dayExp[c.d] || 0;
           return (
-            <button key={d} style={{ ...s.calCell, ...(isToday ? s.calCellToday(T) : {}) }} onClick={() => onDay(ds)}>
-              <span style={{ ...s.calDay, color: isToday ? T.gold : (i % 7 === 0 ? T.neg : T.hi) }}>{d}</span>
-              {exp > 0 && <span style={s.calAmt}>{yenCell(exp)}</span>}
-              {inc > 0 && <span style={s.calDot(T)} />}
+            <button key={c.d} style={s.calCell} onClick={() => onDay(ds)}>
+              <span style={isToday ? { ...s.calDay, ...s.calToday(T) } : { ...s.calDay, color: col === 0 ? T.neg : col === 6 ? INC : T.hi }}>{c.d}</span>
+              <div style={s.calAmts}>
+                {inc > 0 && <span style={{ ...s.calAmt, color: INC }}>{yenCell(inc)}</span>}
+                {exp > 0 && <span style={{ ...s.calAmt, color: T.neg }}>{yenCell(exp)}</span>}
+              </div>
             </button>
           );
         })}
@@ -1082,17 +1089,18 @@ function styles(T) {
     monthChipOn: (T) => ({ background: T.gold, color: T.onGold, borderColor: T.gold, boxShadow: "none" }),
 
     // カレンダー
-    calCard: { ...cardFace, borderRadius: R.card, padding: "12px 10px 10px", marginBottom: 4 },
+    calCard: { ...cardFace, borderRadius: R.card, padding: "12px 8px 8px", marginBottom: 4 },
     calHead: { display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 4px 10px" },
     calNav: { background: "none", border: "none", padding: 6, cursor: "pointer", display: "flex", borderRadius: R.btn },
     calTitle: { fontSize: 16, fontWeight: 800, color: T.hi, letterSpacing: 0.3 },
-    calGrid: { display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 3 },
+    calGrid: { display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 2 },
     calDow: { textAlign: "center", fontSize: 11, fontWeight: 700, paddingBottom: 4 },
-    calCell: { display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-start", minHeight: 46, padding: "4px 0 3px", borderRadius: Math.max(6, R.icon - 2), background: "none", border: "1px solid transparent", cursor: "pointer", fontFamily: T.font, gap: 1, overflow: "hidden" },
-    calCellToday: (T) => ({ background: T.gold + "18", borderColor: T.gold + "66" }),
-    calDay: { fontSize: 13, fontWeight: 600, lineHeight: 1.1 },
-    calAmt: { fontSize: 9, fontWeight: 600, color: T.lo, lineHeight: 1, whiteSpace: "nowrap", maxWidth: "100%", overflow: "hidden", textOverflow: "ellipsis" },
-    calDot: (T) => ({ width: 4, height: 4, borderRadius: "50%", background: T.pos, marginTop: 1 }),
+    calCell: { display: "flex", flexDirection: "column", alignItems: "stretch", justifyContent: "flex-start", minHeight: 56, padding: "3px 3px", borderRadius: 8, background: "none", border: "none", cursor: "pointer", fontFamily: T.font, overflow: "hidden", textAlign: "left" },
+    calCellOut: { display: "flex", flexDirection: "column", minHeight: 56, padding: "3px 3px", borderRadius: 8, overflow: "hidden", background: T.hi + "0A" },
+    calDay: { fontSize: 12, fontWeight: 600, lineHeight: 1.25, alignSelf: "flex-start" },
+    calToday: (T) => ({ background: T.gold, color: T.onGold, fontWeight: 800, borderRadius: 6, padding: "0 5px" }),
+    calAmts: { marginTop: "auto", display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 0, width: "100%" },
+    calAmt: { fontSize: 9, fontWeight: 600, lineHeight: 1.3, letterSpacing: -0.2, whiteSpace: "nowrap", maxWidth: "100%", overflow: "hidden" },
 
     ruleCard: { ...cardFace, display: "flex", alignItems: "center", gap: 11, padding: 12, borderRadius: R.card, cursor: "pointer", width: "100%", fontFamily: T.font },
     dashedBtn: { display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: 13, background: "none", border: `1.5px dashed ${T.line}`, borderRadius: R.card, color: T.lo, fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: T.font },
