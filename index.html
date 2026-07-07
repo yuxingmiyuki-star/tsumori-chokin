@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
 <meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <meta name="theme-color" content="#0E1014" />
 <title>つもりキャッシュ</title>
 <style>
@@ -158,7 +158,16 @@ const migrate = (d) => {
   };
 };
 const load = () => { try { const r = localStorage.getItem(SAVE_KEY); return r ? migrate(JSON.parse(r)) : seed(); } catch (e) { return seed(); } };
-const save = (obj) => { try { localStorage.setItem(SAVE_KEY, JSON.stringify(obj)); } catch (e) {} };
+let saveWarned = false;
+const save = (obj) => {
+  try { localStorage.setItem(SAVE_KEY, JSON.stringify(obj)); }
+  catch (e) {
+    if (!saveWarned) {
+      saveWarned = true;
+      alert("保存できませんでした。ブラウザの空き容量が不足しているか、プライベートモードの可能性があります。念のため 設定 →「書き出し」でバックアップを取ってください。");
+    }
+  }
+};
 
 // =================================================================
 function App() {
@@ -181,6 +190,7 @@ function App() {
 
   // ---- 操作 ----
   const addTxn = (t) => update((d) => ({ ...d, txns: [{ id: uid(), createdAt: Date.now(), satisfaction: 0, ...t }, ...d.txns] }));
+  const editTxn = (id, patch) => update((d) => ({ ...d, txns: d.txns.map((t) => t.id === id ? { ...t, ...patch } : t) }));
   const setSatisfaction = (id, v) => update((d) => ({ ...d, txns: d.txns.map((t) => t.id === id ? { ...t, satisfaction: t.satisfaction === v ? 0 : v } : t) }));
   const delTxn = (id) => update((d) => ({ ...d, txns: d.txns.filter((t) => t.id !== id) }));
 
@@ -199,6 +209,7 @@ function App() {
   const editReward = (id, r) => update((d) => ({ ...d, rewards: d.rewards.map((x) => x.id === id ? { ...x, ...r } : x) }));
   const delReward = (id) => update((d) => ({ ...d, rewards: d.rewards.filter((x) => x.id !== id) }));
   const redeem = (rw) => { update((d) => ({ ...d, redeems: [{ id: uid(), createdAt: Date.now(), rewardId: rw.id, name: rw.name, price: rw.price, date: todayISO() }, ...d.redeems] })); buzz([10, 40, 20, 40, 80]); };
+  const delRedeem = (id) => update((d) => ({ ...d, redeems: d.redeems.filter((x) => x.id !== id) }));
 
   // ---- 買い物リスト ----
   const addShopItem = (it) => update((d) => ({ ...d, shopping: [{ id: uid(), createdAt: Date.now(), status: "open", ...it }, ...d.shopping] }));
@@ -211,7 +222,7 @@ function App() {
   };
 
   const shared = { data, setData, update, T, s, balance, catOf, modal, setModal, cycleSkin,
-    addTxn, setSatisfaction, delTxn, logSave, delSave, addRule, editRule, delRule, addReward, editReward, delReward, redeem,
+    addTxn, editTxn, setSatisfaction, delTxn, logSave, delSave, addRule, editRule, delRule, addReward, editReward, delReward, redeem, delRedeem,
     addShopItem, editShopItem, delShopItem, markBought, skipShopItem };
 
   return (
@@ -465,7 +476,7 @@ function TxnRow({ t, s, T, catOf, onRate, onTap, compact }) {
       </div>
       <div style={{ flex: 1, minWidth: 0 }} onClick={onTap}>
         <div style={{ color: T.hi, fontSize: 14, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.memo || c?.name || (isInc ? "収入" : "支出")}</div>
-        {!compact && !isInc && <div style={{ marginTop: 3 }}><Stars value={t.satisfaction} T={T} size={15} onRate={onRate} /></div>}
+        {!compact && !isInc && <div style={{ marginTop: 4 }}><Stars value={t.satisfaction} T={T} size={24} onRate={onRate} /></div>}
         {compact && <div style={{ color: T.lo, fontSize: 11 }}>{fmtDate(t.date)} · {c?.name}</div>}
       </div>
       <div style={{ color: isInc ? T.pos : T.hi, fontSize: 15, fontWeight: 700, whiteSpace: "nowrap" }}>{isInc ? "+" : ""}{yen(t.amount)}</div>
@@ -477,7 +488,7 @@ function Stars({ value, T, size = 16, onRate }) {
   return (
     <div style={{ display: "inline-flex", gap: 2 }}>
       {[1, 2, 3, 4, 5].map((n) => (
-        <span key={n} onClick={onRate ? (e) => { e.stopPropagation(); onRate(n); } : undefined} style={{ cursor: onRate ? "pointer" : "default", lineHeight: 0, padding: onRate ? 1 : 0 }}>
+        <span key={n} onClick={onRate ? (e) => { e.stopPropagation(); onRate(n); } : undefined} style={{ cursor: onRate ? "pointer" : "default", lineHeight: 0, padding: onRate ? "6px 3px" : 0, margin: onRate ? "-6px 0" : 0 }}>
           <Star size={size} color={n <= value ? T.gold : T.lo} fill={n <= value ? T.gold : "none"} strokeWidth={2} style={{ opacity: n <= value ? 1 : 0.4 }} />
         </span>
       ))}
@@ -540,7 +551,7 @@ function TsumoriScreen({ data, T, s, balance, logSave, delSave, setModal }) {
 }
 
 // ============================ ご褒美ショップ ============================
-function ShopScreen({ data, T, s, balance, redeem, delReward, setModal }) {
+function ShopScreen({ data, T, s, balance, redeem, delRedeem, delReward, setModal }) {
   const [confirm, setConfirm] = useState(null);
   return (
     <div style={s.page}>
@@ -578,8 +589,9 @@ function ShopScreen({ data, T, s, balance, redeem, delReward, setModal }) {
             {data.redeems.slice(0, 20).map((x) => (
               <div key={x.id} style={s.txnRow}>
                 <div style={{ ...s.txnIcon, background: T.pos + "1E" }}><Gift size={16} color={T.pos} /></div>
-                <div style={{ flex: 1 }}><div style={{ color: T.hi, fontSize: 14, fontWeight: 600 }}>{x.name}</div><div style={{ color: T.lo, fontSize: 11 }}>{fmtDate(x.date)}</div></div>
+                <div style={{ flex: 1, minWidth: 0 }}><div style={{ color: T.hi, fontSize: 14, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{x.name}</div><div style={{ color: T.lo, fontSize: 11 }}>{fmtDate(x.date)}</div></div>
                 <div style={{ color: T.lo, fontSize: 14, fontWeight: 700 }}>-{yen(x.price)}</div>
+                <button style={s.delMini} onClick={() => delRedeem(x.id)} aria-label="交換を取り消す"><X size={14} color={T.lo} /></button>
               </div>
             ))}
           </div>
@@ -712,7 +724,7 @@ function IconPicker({ s, T, value, onChange }) {
 }
 
 // 支出/収入フォーム
-function TxnForm({ s, T, data, addTxn, delTxn, setSatisfaction, close, editId, modal, markBought }) {
+function TxnForm({ s, T, data, addTxn, editTxn, delTxn, setSatisfaction, close, editId, modal, markBought }) {
   const edit = editId ? data.txns.find((t) => t.id === editId) : null;
   const pre = !edit ? modal?.prefill : null;
   const [type, setType] = useState(edit?.type || "expense");
@@ -724,8 +736,11 @@ function TxnForm({ s, T, data, addTxn, delTxn, setSatisfaction, close, editId, m
   const submit = () => {
     const amt = parseInt(amount, 10);
     if (!amt) return;
-    if (edit) { delTxn(edit.id); }
-    addTxn({ type, amount: amt, category, memo: memo.trim(), date, satisfaction: edit?.satisfaction || 0 });
+    if (edit) {
+      editTxn(edit.id, { type, amount: amt, category, memo: memo.trim(), date });
+    } else {
+      addTxn({ type, amount: amt, category, memo: memo.trim(), date });
+    }
     if (modal?.shoppingId) markBought(modal.shoppingId);
     close();
   };
