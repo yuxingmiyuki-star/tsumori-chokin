@@ -32,7 +32,7 @@
 import React from "https://esm.sh/react@18.3.1";
 import { createRoot } from "https://esm.sh/react-dom@18.3.1/client";
 import { useState, useEffect, useMemo } from "https://esm.sh/react@18.3.1";
-import { PiggyBank, Wallet, Store, Home, Plus, X, Coffee, Utensils, ShoppingBag, Bus, Gamepad2, Heart, Sparkles, Settings, Download, Upload, Trash2, Check, Star, TrendingUp, TrendingDown, Gift, Pencil, ChevronRight, ChevronLeft, Bath, BookOpen, Wine, Cigarette, Smartphone, Plane, Shirt, Receipt, Coins, ArrowLeft, Cake, Music, Dumbbell, Car, Pizza, IceCream, Beer, GraduationCap, Palette, ListChecks, ShoppingCart } from "https://esm.sh/lucide-react@0.383.0?deps=react@18.3.1";
+import { PiggyBank, Wallet, Store, Home, Plus, X, Coffee, Utensils, ShoppingBag, Bus, Gamepad2, Heart, Sparkles, Settings, Download, Upload, Trash2, Check, Star, TrendingUp, TrendingDown, Gift, Pencil, ChevronRight, ChevronLeft, Bath, BookOpen, Wine, Cigarette, Smartphone, Plane, Shirt, Receipt, Coins, ArrowLeft, Cake, Music, Dumbbell, Car, Pizza, IceCream, Beer, GraduationCap, Palette, ListChecks, ShoppingCart, BarChart3, Clock, RotateCcw } from "https://esm.sh/lucide-react@0.383.0?deps=react@18.3.1";
 
 /* ============================================================
    つもりキャッシュ — つもり貯金 × 家計簿 × ご褒美 × 満足度
@@ -48,6 +48,11 @@ const fmtMonth = (mk) => { const [y, m] = mk.split("-"); return `${y}年${+m}月
 const shiftMonth = (mk, delta) => { const [y, m] = mk.split("-").map(Number); const d = new Date(y, m - 1 + delta, 1); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`; };
 // カレンダーのマス用の金額（円まで表示）
 const yenCell = (n) => (n ? n.toLocaleString("ja-JP") + "円" : "");
+// 日付文字列から今日までの経過日数
+const daysAgo = (ds) => Math.floor((new Date(todayISO()) - new Date(ds)) / 86400000);
+// 感情タグ（記録フォームの任意チップ／分析で自動集計）
+const EMOTAGS = ["衝動", "ストレス", "ご褒美", "必要"];
+const RESAT_MIN = 7, RESAT_MAX = 30; // 再評価の対象: 購入からこの日数の範囲
 
 // アイコン：保存はキー文字列で行う（関数はJSON化できないため）
 const ICONS = {
@@ -128,7 +133,7 @@ const SCHEMA = 1;
 
 const seed = () => ({
   v: SCHEMA,
-  settings: { theme: "midnight" },
+  settings: { theme: "midnight", coolDays: 7 },
   cats: DEFAULT_CATS,
   txns: [],
   rules: [
@@ -195,6 +200,8 @@ function App() {
   const addTxn = (t) => update((d) => ({ ...d, txns: [{ id: uid(), createdAt: Date.now(), satisfaction: 0, ...t }, ...d.txns] }));
   const editTxn = (id, patch) => update((d) => ({ ...d, txns: d.txns.map((t) => t.id === id ? { ...t, ...patch } : t) }));
   const setSatisfaction = (id, v) => update((d) => ({ ...d, txns: d.txns.map((t) => t.id === id ? { ...t, satisfaction: t.satisfaction === v ? 0 : v } : t) }));
+  const setSat2 = (id, v) => { update((d) => ({ ...d, txns: d.txns.map((t) => t.id === id ? { ...t, sat2: v, sat2At: Date.now() } : t) })); buzz(8); };
+  const skipSat2 = (id) => update((d) => ({ ...d, txns: d.txns.map((t) => t.id === id ? { ...t, sat2Skip: true } : t) }));
   const delTxn = (id) => update((d) => ({ ...d, txns: d.txns.filter((t) => t.id !== id) }));
 
   const logSave = (rule, actualOverride) => {
@@ -219,20 +226,22 @@ function App() {
   const editShopItem = (id, patch) => update((d) => ({ ...d, shopping: d.shopping.map((x) => x.id === id ? { ...x, ...patch } : x) }));
   const delShopItem = (id) => update((d) => ({ ...d, shopping: d.shopping.filter((x) => x.id !== id) }));
   const markBought = (id) => update((d) => ({ ...d, shopping: d.shopping.map((x) => x.id === id ? { ...x, status: "bought", doneDate: todayISO() } : x) }));
+  const keepShopItem = (id) => update((d) => ({ ...d, shopping: d.shopping.map((x) => x.id === id ? { ...x, keptAt: Date.now() } : x) }));
   const skipShopItem = (it) => {
     logSave({ name: it.name, assumed: it.price, actual: 0, icon: it.icon || "cart" });
     update((d) => ({ ...d, shopping: d.shopping.map((x) => x.id === it.id ? { ...x, status: "skipped", doneDate: todayISO() } : x) }));
   };
 
   const shared = { data, setData, update, T, s, balance, catOf, modal, setModal, cycleSkin,
-    addTxn, editTxn, setSatisfaction, delTxn, logSave, delSave, addRule, editRule, delRule, addReward, editReward, delReward, redeem, delRedeem,
-    addShopItem, editShopItem, delShopItem, markBought, skipShopItem };
+    addTxn, editTxn, setSatisfaction, setSat2, skipSat2, delTxn, logSave, delSave, addRule, editRule, delRule, addReward, editReward, delReward, redeem, delRedeem,
+    addShopItem, editShopItem, delShopItem, markBought, skipShopItem, keepShopItem };
 
   return (
     <div style={s.app}>
       <div style={s.scroll}>
         {tab === "home" && <HomeScreen {...shared} go={setTab} />}
         {tab === "ledger" && <LedgerScreen {...shared} />}
+        {tab === "analysis" && <AnalysisScreen {...shared} />}
         {tab === "list" && <ShoppingScreen {...shared} />}
         {tab === "tsumori" && <TsumoriScreen {...shared} />}
         {tab === "shop" && <ShopScreen {...shared} />}
@@ -247,6 +256,7 @@ function App() {
       <nav style={s.nav}>
         <NavBtn s={s} T={T} active={tab === "home"} onClick={() => setTab("home")} icon={Home} label="ホーム" />
         <NavBtn s={s} T={T} active={tab === "ledger"} onClick={() => setTab("ledger")} icon={Wallet} label="家計簿" />
+        <NavBtn s={s} T={T} active={tab === "analysis"} onClick={() => setTab("analysis")} icon={BarChart3} label="分析" />
         <NavBtn s={s} T={T} active={tab === "list"} onClick={() => setTab("list")} icon={ListChecks} label="リスト" />
         <NavBtn s={s} T={T} active={tab === "tsumori"} onClick={() => setTab("tsumori")} icon={PiggyBank} label="つもり" />
         <NavBtn s={s} T={T} active={tab === "shop"} onClick={() => setTab("shop")} icon={Store} label="ご褒美" />
@@ -267,9 +277,12 @@ function NavBtn({ s, T, active, onClick, icon: Icon, label }) {
 }
 
 // ============================ ホーム ============================
-function HomeScreen({ data, T, s, balance, catOf, setModal, go, cycleSkin }) {
+function HomeScreen({ data, T, s, balance, catOf, setModal, go, cycleSkin, setSat2, skipSat2 }) {
   const mk = monthKey(todayISO());
   const mTxns = data.txns.filter((t) => monthKey(t.date) === mk);
+  const resatList = data.txns
+    .filter((t) => t.type !== "income" && t.satisfaction > 0 && !t.sat2 && !t.sat2Skip && daysAgo(t.date) >= RESAT_MIN && daysAgo(t.date) <= RESAT_MAX)
+    .sort((a, b) => a.date.localeCompare(b.date));
   const expense = mTxns.filter((t) => t.type !== "income").reduce((a, t) => a + t.amount, 0);
   const income = mTxns.filter((t) => t.type === "income").reduce((a, t) => a + t.amount, 0);
   const mSaves = data.saves.filter((x) => monthKey(x.date) === mk).reduce((a, x) => a + x.saved, 0);
@@ -311,6 +324,9 @@ function HomeScreen({ data, T, s, balance, catOf, setModal, go, cycleSkin }) {
           </div>
         )}
       </div>
+
+      {/* 1週間後の振り返り */}
+      <ResatCard s={s} T={T} list={resatList} catOf={catOf} setSat2={setSat2} skipSat2={skipSat2} />
 
       {/* 今月サマリー */}
       <div style={s.row3}>
@@ -542,6 +558,174 @@ function Stars({ value, T, size = 16, onRate }) {
   );
 }
 
+// ============================ 振り返り＆分析 ============================
+function ResatCard({ s, T, list, catOf, setSat2, skipSat2 }) {
+  if (!list.length) return null;
+  const t = list[0];
+  const c = catOf(t.category);
+  return (
+    <div style={{ ...s.card, padding: 14, marginBottom: 14, borderColor: T.gold + "55" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 8 }}>
+        <RotateCcw size={15} color={T.gold} />
+        <span style={{ color: T.hi, fontSize: 13, fontWeight: 800 }}>振り返りタイム</span>
+        {list.length > 1 && <span style={{ color: T.lo, fontSize: 11, marginLeft: "auto" }}>あと{list.length}件</span>}
+      </div>
+      <div style={{ color: T.lo, fontSize: 12, marginBottom: 8 }}>{daysAgo(t.date)}日前のこの買い物、<b style={{ color: T.hi }}>今は</b>どう感じますか？</div>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
+        <div style={{ ...s.txnIcon, background: T.gold + "1E" }}><Ic name={c?.icon || "receipt"} size={16} color={T.gold} /></div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ color: T.hi, fontSize: 14, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.memo || c?.name || "支出"}</div>
+          <div style={{ color: T.lo, fontSize: 11 }}>{fmtDate(t.date)} · {yen(t.amount)}</div>
+        </div>
+      </div>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <Stars value={0} T={T} size={26} onRate={(v) => setSat2(t.id, v)} />
+        <button style={{ ...s.btnGhost, padding: "8px 12px", fontSize: 12 }} onClick={() => skipSat2(t.id)}>スキップ</button>
+      </div>
+    </div>
+  );
+}
+
+function AnalysisScreen({ data, T, s, catOf }) {
+  const [mk, setMk] = useState(monthKey(todayISO()));
+  const exp = data.txns.filter((t) => t.type !== "income" && monthKey(t.date) === mk);
+  const rated = exp.filter((t) => t.satisfaction > 0);
+  const cover = exp.length ? Math.round((rated.length / exp.length) * 100) : 0;
+
+  // カテゴリ別: 平均★・1★あたりの支払額
+  const byCat = {};
+  rated.forEach((t) => { const k = t.category || "other"; const v = (byCat[k] = byCat[k] || { n: 0, amt: 0, star: 0 }); v.n++; v.amt += t.amount; v.star += t.satisfaction; });
+  const catRows = Object.entries(byCat).map(([id, v]) => ({ id, ...v, avg: v.star / v.n, unit: Math.round(v.amt / v.star) })).sort((a, b) => b.avg - a.avg);
+
+  // 後悔した支出（★1-2）
+  const regrets = rated.filter((t) => t.satisfaction <= 2).sort((a, b) => b.amount - a.amount);
+  const regretTotal = regrets.reduce((a, t) => a + t.amount, 0);
+
+  // 再評価で満足度が落ちた買い物
+  const rerated = exp.filter((t) => t.sat2 && t.satisfaction > 0);
+  const gaps = rerated.filter((t) => t.sat2 < t.satisfaction).sort((a, b) => (b.satisfaction - b.sat2) - (a.satisfaction - a.sat2));
+
+  // 感情タグ別
+  const emo = EMOTAGS.map((tag) => {
+    const list = exp.filter((t) => (t.memo || "").includes("#" + tag));
+    const r = list.filter((t) => t.satisfaction > 0);
+    return { tag, n: list.length, amt: list.reduce((a, t) => a + t.amount, 0), avg: r.length ? r.reduce((a, t) => a + t.satisfaction, 0) / r.length : 0 };
+  }).filter((e) => e.n > 0);
+
+  const nameOf = (t) => t.memo || catOf(t.category)?.name || "支出";
+
+  return (
+    <div style={s.page}>
+      <header style={s.appHead}><div style={s.appTitle}>分析</div></header>
+      <div style={{ ...s.calHead, padding: "0 4px 12px" }}>
+        <button style={s.calNav} onClick={() => setMk((k) => shiftMonth(k, -1))} aria-label="前の月"><ChevronLeft size={20} color={T.hi} /></button>
+        <div style={s.calTitle}>{fmtMonth(mk)}</div>
+        <button style={s.calNav} onClick={() => setMk((k) => shiftMonth(k, 1))} aria-label="次の月"><ChevronRight size={20} color={T.hi} /></button>
+      </div>
+
+      {exp.length === 0 ? (
+        <div style={s.card}><div style={s.empty}>この月の支出はまだありません。</div></div>
+      ) : (
+        <>
+          {/* ★記入率 */}
+          <div style={{ ...s.card, padding: 14 }}>
+            <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 8 }}>
+              <span style={{ color: T.lo, fontSize: 12, fontWeight: 700 }}>★の記入率</span>
+              <span style={{ color: T.hi, fontSize: 13, fontWeight: 800 }}>{exp.length}件中 {rated.length}件（{cover}%）</span>
+            </div>
+            <div style={s.progTrack}><div style={{ ...s.progFill, width: `${cover}%` }} /></div>
+            {cover < 100 && <div style={{ color: T.lo, fontSize: 11, marginTop: 8, lineHeight: 1.6 }}>★を付けるほど分析が正確になります。家計簿タブの記録をタップして付けられます。</div>}
+          </div>
+
+          {/* カテゴリ別 */}
+          <SectionTitle s={s} T={T}>カテゴリ別の満足度</SectionTitle>
+          <div style={s.card}>
+            {catRows.length === 0 && <div style={s.empty}>★を付けた支出がまだありません。</div>}
+            {catRows.map((r) => { const c = catOf(r.id); return (
+              <div key={r.id} style={s.txnRow}>
+                <div style={{ ...s.txnIcon, background: T.gold + "1E" }}><Ic name={c?.icon || "receipt"} size={16} color={T.gold} /></div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ color: T.hi, fontSize: 14, fontWeight: 600 }}>{c?.name || "その他"}</div>
+                  <div style={{ color: T.lo, fontSize: 11 }}>{r.n}件 · 1★あたり {yen(r.unit)}</div>
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                  <Star size={14} color={T.gold} fill={T.gold} />
+                  <span style={{ color: T.hi, fontSize: 15, fontWeight: 800 }}>{r.avg.toFixed(1)}</span>
+                </div>
+              </div>
+            ); })}
+          </div>
+
+          {/* 後悔した支出 */}
+          <SectionTitle s={s} T={T}>後悔した支出（★1-2）</SectionTitle>
+          <div style={{ ...s.card, padding: regrets.length ? undefined : 0 }}>
+            {regrets.length === 0 ? (
+              <div style={{ padding: 14 }}><div style={s.empty}>この月は後悔した買い物なし。良いお金の使い方です！</div></div>
+            ) : (
+              <>
+                <div style={{ padding: "14px 14px 4px" }}>
+                  <div style={{ color: T.neg, fontSize: 22, fontWeight: 800 }}>{yen(regretTotal)}</div>
+                  <div style={{ color: T.lo, fontSize: 11, lineHeight: 1.6 }}>この額が来月のつもり貯金の伸びしろ。同じ買い物を我慢できたら、そのままご褒美の原資になります。</div>
+                </div>
+                {regrets.slice(0, 5).map((t) => (
+                  <div key={t.id} style={s.txnRow}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ color: T.hi, fontSize: 13, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{nameOf(t)}</div>
+                      <div style={{ color: T.lo, fontSize: 11 }}>{fmtDate(t.date)}</div>
+                    </div>
+                    <Stars value={t.satisfaction} T={T} size={12} />
+                    <span style={{ color: T.neg, fontSize: 13, fontWeight: 700 }}>{yen(t.amount)}</span>
+                  </div>
+                ))}
+              </>
+            )}
+          </div>
+
+          {/* 満足度が落ちた買い物 */}
+          <SectionTitle s={s} T={T}>時間が経って満足度が落ちた買い物</SectionTitle>
+          <div style={s.card}>
+            {rerated.length === 0 ? (
+              <div style={s.empty}>★を付けて7日経つと、ホームに「振り返り」が出ます。{"\n"}付け直した★との差がここに表示されます。</div>
+            ) : gaps.length === 0 ? (
+              <div style={s.empty}>再評価{rerated.length}件、満足度は落ちていません。{"\n"}衝動買いの少ない良い選択ができています。</div>
+            ) : (
+              gaps.slice(0, 5).map((t) => (
+                <div key={t.id} style={s.txnRow}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ color: T.hi, fontSize: 13, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{nameOf(t)}</div>
+                    <div style={{ color: T.lo, fontSize: 11 }}>{fmtDate(t.date)} · {yen(t.amount)}</div>
+                  </div>
+                  <span style={{ color: T.hi, fontSize: 13, fontWeight: 800 }}>★{t.satisfaction} <span style={{ color: T.lo }}>→</span> <span style={{ color: T.neg }}>★{t.sat2}</span></span>
+                </div>
+              ))
+            )}
+          </div>
+
+          {/* 感情タグ別 */}
+          <SectionTitle s={s} T={T}>気分と満足度</SectionTitle>
+          <div style={s.card}>
+            {emo.length === 0 ? (
+              <div style={s.empty}>記録のメモに #衝動 #ストレス #ご褒美 #必要 を付けると、{"\n"}気分ごとの満足度がここに出ます（記録フォームにチップがあります）。</div>
+            ) : (
+              emo.map((e) => (
+                <div key={e.tag} style={s.txnRow}>
+                  <span style={{ ...s.pill, background: T.gold + "22", color: T.gold }}>#{e.tag}</span>
+                  <div style={{ flex: 1 }}><div style={{ color: T.lo, fontSize: 11 }}>{e.n}件 · {yen(e.amt)}</div></div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                    <Star size={14} color={T.gold} fill={T.gold} />
+                    <span style={{ color: T.hi, fontSize: 15, fontWeight: 800 }}>{e.avg ? e.avg.toFixed(1) : "—"}</span>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </>
+      )}
+      <div style={{ height: 24 }} />
+    </div>
+  );
+}
+
 // ============================ つもり貯金 ============================
 function TsumoriScreen({ data, T, s, balance, logSave, delSave, setModal }) {
   const recent = data.saves.slice(0, 30);
@@ -663,10 +847,11 @@ function ShopScreen({ data, T, s, balance, redeem, delRedeem, delReward, setModa
 }
 
 // ============================ 買い物リスト ============================
-function ShoppingScreen({ data, T, s, catOf, setModal, skipShopItem, delShopItem }) {
+function ShoppingScreen({ data, T, s, catOf, setModal, skipShopItem, delShopItem, keepShopItem }) {
   const open = data.shopping.filter((x) => x.status === "open");
   const done = data.shopping.filter((x) => x.status !== "open").slice(0, 30);
   const estTotal = open.reduce((a, x) => a + (x.price || 0), 0);
+  const coolMs = (data.settings.coolDays ?? 7) * 86400000;
 
   return (
     <div style={s.page}>
@@ -683,6 +868,13 @@ function ShoppingScreen({ data, T, s, catOf, setModal, skipShopItem, delShopItem
         {open.length === 0 && <div style={s.card}><div style={s.empty}>リストは空です。{"\n"}＋から買いたいものを追加しましょう。{"\n"}買う前にリストに入れて一晩おくと、{"\n"}「本当に欲しいか」が見えてきます。</div></div>}
         {open.map((it) => {
           const c = catOf(it.category);
+          const coolLeft = Math.ceil((it.createdAt + coolMs - Date.now()) / 86400000);
+          const cooling = !it.keptAt && coolLeft > 0;
+          const askKeep = !it.keptAt && coolLeft <= 0;
+          const buy = () => {
+            if (cooling && !window.confirm(`冷却期間中です（あと${coolLeft}日）。\nそれでも「${it.name}」を買いますか？`)) return;
+            setModal({ type: "txn", prefill: { amount: it.price || 0, category: it.category, memo: it.name }, shoppingId: it.id });
+          };
           return (
             <div key={it.id} style={{ ...s.card, padding: 12 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 11, cursor: "pointer" }} onClick={() => setModal({ type: "shopItem", id: it.id })}>
@@ -691,11 +883,23 @@ function ShoppingScreen({ data, T, s, catOf, setModal, skipShopItem, delShopItem
                   <div style={{ color: T.hi, fontSize: 14, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{it.name}</div>
                   <div style={{ color: T.lo, fontSize: 11 }}>{c?.name || "カテゴリなし"}{it.price ? ` · 予算 ${yen(it.price)}` : " · 予算未設定"}</div>
                 </div>
+                {cooling && <span style={{ ...s.pill, background: T.gold + "22", color: T.gold, display: "inline-flex", alignItems: "center", gap: 4 }}><Clock size={11} /> あと{coolLeft}日</span>}
                 <Pencil size={14} color={T.lo} />
               </div>
+              {askKeep && (
+                <div style={{ marginTop: 10, padding: "10px 11px", borderRadius: 10, background: T.gold + "14", border: `1px solid ${T.gold}44` }}>
+                  <div style={{ color: T.hi, fontSize: 12, fontWeight: 700, marginBottom: 8 }}>冷却期間が明けました。まだ欲しいですか？</div>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <button style={{ ...s.btnGhost, flex: 1, padding: "8px 0", fontSize: 12 }} onClick={() => keepShopItem(it.id)}>まだ欲しい</button>
+                    <button style={{ ...s.btnGhost, flex: 1, padding: "8px 0", fontSize: 12, color: T.gold, borderColor: T.gold + "66" }}
+                      onClick={() => { if (it.price) { skipShopItem(it); } else if (window.confirm(`「${it.name}」をリストから削除しますか？\n（予算未設定のため、つもり貯金にはなりません）`)) { delShopItem(it.id); } }}>
+                      もういらない{it.price ? "→貯金" : ""}
+                    </button>
+                  </div>
+                </div>
+              )}
               <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
-                <button style={{ ...s.btnGhost, flex: 1, padding: "10px 0", fontSize: 13 }}
-                  onClick={() => setModal({ type: "txn", prefill: { amount: it.price || 0, category: it.category, memo: it.name }, shoppingId: it.id })}>
+                <button style={{ ...s.btnGhost, flex: 1, padding: "10px 0", fontSize: 13, opacity: cooling ? 0.65 : 1 }} onClick={buy}>
                   <Receipt size={15} /> 買った
                 </button>
                 <button style={{ ...s.btnGhost, flex: 1, padding: "10px 0", fontSize: 13, color: T.gold, borderColor: T.gold + "66" }}
@@ -834,7 +1038,23 @@ function TxnForm({ s, T, data, addTxn, editTxn, delTxn, setSatisfaction, close, 
           </div>
         </Field>
       )}
-      <Field s={s} T={T} label="メモ"><input style={s.input} value={memo} placeholder={type === "income" ? "給料 など" : "ファミマ など"} onChange={(e) => setMemo(e.target.value)} /></Field>
+      <Field s={s} T={T} label="メモ">
+        {type === "expense" && (
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
+            {EMOTAGS.map((tag) => {
+              const on = memo.includes("#" + tag);
+              return (
+                <button key={tag} style={{ ...s.catChip, ...(on ? { background: T.gold + "20", borderColor: T.gold, color: T.hi } : {}) }}
+                  onClick={() => setMemo((m) => on ? m.replace("#" + tag, "").replace(/\s{2,}/g, " ").trim() : (m ? m + " " : "") + "#" + tag)}>
+                  #{tag}
+                </button>
+              );
+            })}
+          </div>
+        )}
+        <input style={s.input} value={memo} placeholder={type === "income" ? "給料 など" : "ファミマ など"} onChange={(e) => setMemo(e.target.value)} />
+        {type === "expense" && <div style={{ color: T.lo, fontSize: 10, marginTop: 5 }}>気分タグは任意。付けると分析タブで「気分×満足度」が見えます。</div>}
+      </Field>
       <Field s={s} T={T} label="日付"><input type="date" style={s.input} value={date} onChange={(e) => setDate(e.target.value)} /></Field>
       {edit && type === "expense" && (
         <Field s={s} T={T} label="満足度（このお金の使い方は？）">
@@ -1006,6 +1226,20 @@ function SettingsForm({ s, T, data, setData, close }) {
           })}
         </div>
         <div style={{ color: T.lo, fontSize: 11, marginTop: 8, lineHeight: 1.6 }}>ホーム右上の🎨ボタンでも次々切り替えて見比べられます。</div>
+      </Field>
+      <Field s={s} T={T} label="買い物リストのクーリングオフ期間">
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+          {[3, 5, 7, 10, 14].map((n) => {
+            const on = (data.settings.coolDays ?? 7) === n;
+            return (
+              <button key={n} style={{ ...s.catChip, ...(on ? { background: T.gold + "20", borderColor: T.gold, color: T.hi } : {}) }}
+                onClick={() => setData((d) => ({ ...d, settings: { ...d.settings, coolDays: n } }))}>
+                {n}日
+              </button>
+            );
+          })}
+        </div>
+        <div style={{ color: T.lo, fontSize: 11, marginTop: 8, lineHeight: 1.6 }}>リストに追加してからこの日数は「冷却中」になり、明けると「まだ欲しい？」の確認が出ます。</div>
       </Field>
       <Field s={s} T={T} label="データ（端末内に保存されています）">
         <div style={{ display: "flex", gap: 10 }}>
