@@ -21,6 +21,9 @@
   /* iOS Safari: date入力の値を左寄せ・入力幅いっぱいに */
   input[type="date"] { min-width: 100%; }
   input[type="date"]::-webkit-date-and-time-value { text-align: left; margin: 0; }
+  /* ホームのコンパクト行用: 右寄せ・幅自動 */
+  input[type="date"].dateR { min-width: 0; width: auto; }
+  input[type="date"].dateR::-webkit-date-and-time-value { text-align: right; }
   ::placeholder { color: #5A606B; }
 </style>
 <script>
@@ -331,9 +334,9 @@ function HomeScreen(props) {
         </div>
       </div>
 
-      {/* 記録フォーム（インライン） */}
-      <div style={s.card}>
-        <TxnForm {...props} modal={null} inline />
+      {/* 記録フォーム（コンパクト行・押すと展開） */}
+      <div style={{ ...s.card, padding: "14px 14px 16px" }}>
+        <QuickEntry {...props} />
       </div>
 
       {/* 今日の記録 */}
@@ -348,6 +351,113 @@ function HomeScreen(props) {
       )}
       <div style={{ height: 24 }} />
     </div>
+  );
+}
+
+// ホーム用クイック入力: 1行ずつのコンパクト表示。カテゴリは押したときだけホイールが開く
+function QuickEntry({ data, T, s, addTxn, addCat, editCat, delCat, restoreCat }) {
+  const [type, setType] = useState("expense");
+  const [amount, setAmount] = useState("");
+  const [category, setCategory] = useState((data.cats.find((c) => !c.archived) || data.cats[0]).id);
+  const [memo, setMemo] = useState("");
+  const [date, setDate] = useState(todayISO());
+  const [catOpen, setCatOpen] = useState(false);
+  const [memoFocus, setMemoFocus] = useState(false);
+  const [showCatMgr, setShowCatMgr] = useState(false);
+  const [flash, setFlash] = useState(false);
+  const flashTimer = React.useRef(null);
+  useEffect(() => () => clearTimeout(flashTimer.current), []);
+
+  const activeCats = data.cats.filter((c) => !c.archived);
+  const cat = data.cats.find((c) => c.id === category);
+  const wheelCats = cat && cat.archived ? [...activeCats, cat] : activeCats;
+  useEffect(() => {
+    if (!wheelCats.some((c) => c.id === category) && activeCats[0]) setCategory(activeCats[0].id);
+  }, [data.cats]);
+
+  const row = { display: "flex", alignItems: "center", gap: 10, padding: "13px 2px", borderBottom: `1px solid ${T.line}` };
+  const rowLabel = { color: T.hi, fontSize: 15, fontWeight: 600, flexShrink: 0 };
+  const rowInput = { flex: 1, minWidth: 0, textAlign: "right", background: "none", border: "none", outline: "none", color: T.hi, fontSize: 16, fontWeight: 600, padding: 0, fontFamily: T.font };
+
+  const submit = () => {
+    const amt = parseInt(amount, 10);
+    if (!amt) return;
+    addTxn({ type, amount: amt, category, memo: memo.trim(), date });
+    setAmount(""); setMemo(""); setDate(todayISO()); setCatOpen(false); setMemoFocus(false);
+    buzz(10);
+    setFlash(true);
+    clearTimeout(flashTimer.current);
+    flashTimer.current = setTimeout(() => setFlash(false), 1800);
+  };
+
+  return (
+    <>
+      <div style={{ ...s.segRow, marginBottom: 4 }}>
+        <button style={{ ...s.seg, ...(type === "expense" ? s.segOn(T, T.neg) : {}) }} onClick={() => setType("expense")}>支出</button>
+        <button style={{ ...s.seg, ...(type === "income" ? s.segOn(T, T.pos) : {}) }} onClick={() => setType("income")}>収入</button>
+      </div>
+
+      {/* 金額 */}
+      <div style={row}>
+        <span style={rowLabel}>金額</span>
+        <span style={{ color: T.lo, fontSize: 15, fontWeight: 700, marginLeft: "auto" }}>¥</span>
+        <input style={{ ...rowInput, flex: "none", width: 120 }} inputMode="numeric" pattern="[0-9]*" value={amount} placeholder="0"
+          onChange={(e) => setAmount(e.target.value.replace(/[^0-9]/g, ""))} />
+      </div>
+
+      {/* カテゴリ（押すとホイールが開く） */}
+      {type === "expense" && (
+        <>
+          <button style={{ ...row, width: "100%", background: "none", border: "none", borderBottom: `1px solid ${T.line}`, cursor: "pointer", fontFamily: T.font }} onClick={() => setCatOpen((v) => !v)}>
+            <span style={rowLabel}>カテゴリー</span>
+            <span style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 6, color: T.hi, fontSize: 16, fontWeight: 600 }}>
+              <Ic name={cat?.icon} size={16} color={T.gold} />{cat?.name || "選択"}
+            </span>
+            <ChevronRight size={16} color={T.lo} style={{ transform: catOpen ? "rotate(90deg)" : "none", transition: "transform .15s" }} />
+          </button>
+          {catOpen && (
+            <div style={{ padding: "10px 0", borderBottom: `1px solid ${T.line}` }}>
+              <WheelPicker s={s} T={T} items={wheelCats} value={category} onChange={setCategory} />
+              <div style={{ display: "flex", justifyContent: "space-between", marginTop: 8 }}>
+                <button style={s.catChip} onClick={() => setShowCatMgr(true)}><Pencil size={13} color={T.lo} /> 追加/編集</button>
+                <button style={{ ...s.catChip, borderColor: T.gold, color: T.hi }} onClick={() => setCatOpen(false)}><Check size={13} color={T.gold} /> 完了</button>
+              </div>
+            </div>
+          )}
+        </>
+      )}
+      {showCatMgr && <CatManager s={s} T={T} data={data} addCat={addCat} editCat={editCat} delCat={delCat} restoreCat={restoreCat} close={() => setShowCatMgr(false)} />}
+
+      {/* メモ（フォーカスすると気分タグが出る） */}
+      <div style={row}>
+        <span style={rowLabel}>メモ</span>
+        <input style={rowInput} value={memo} placeholder={type === "income" ? "給料 など" : "品目やお店"}
+          onFocus={() => setMemoFocus(true)} onChange={(e) => setMemo(e.target.value)} />
+      </div>
+      {memoFocus && type === "expense" && (
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", padding: "10px 0", borderBottom: `1px solid ${T.line}` }}>
+          {EMOTAGS.map((tag) => {
+            const on = memo.includes("#" + tag);
+            return (
+              <button key={tag} style={{ ...s.catChip, ...(on ? { background: T.gold + "20", borderColor: T.gold, color: T.hi } : {}) }}
+                onClick={() => setMemo((m) => on ? m.replace("#" + tag, "").replace(/\s{2,}/g, " ").trim() : (m ? m + " " : "") + "#" + tag)}>
+                #{tag}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {/* 日付（押すとiOSの日付ピッカーが開く） */}
+      <div style={{ ...row, borderBottom: "none" }}>
+        <span style={rowLabel}>日付</span>
+        <input type="date" className="dateR" value={date} onChange={(e) => setDate(e.target.value)}
+          style={{ marginLeft: "auto", background: "none", border: "none", outline: "none", color: T.hi, fontSize: 16, fontWeight: 600, padding: 0, textAlign: "right", fontFamily: T.font, WebkitAppearance: "none", appearance: "none", colorScheme: T.dark ? "dark" : "light" }} />
+      </div>
+
+      <button style={{ ...s.btnGold, width: "100%", marginTop: 16, opacity: amount ? 1 : 0.5 }} onClick={submit}>保存</button>
+      {flash && <div style={{ textAlign: "center", color: T.pos, fontSize: 13, fontWeight: 800, marginTop: 12 }}>✓ 保存しました</div>}
+    </>
   );
 }
 
@@ -1116,7 +1226,7 @@ function CatManager({ s, T, data, addCat, editCat, delCat, restoreCat, close }) 
 }
 
 // 支出/収入フォーム
-function TxnForm({ s, T, data, addTxn, editTxn, delTxn, setSatisfaction, close, editId, modal, inline, markBought, addCat, editCat, delCat, restoreCat }) {
+function TxnForm({ s, T, data, addTxn, editTxn, delTxn, setSatisfaction, close, editId, modal, markBought, addCat, editCat, delCat, restoreCat }) {
   const edit = editId ? data.txns.find((t) => t.id === editId) : null;
   const pre = !edit ? modal?.prefill : null;
   const [type, setType] = useState(edit?.type || "expense");
@@ -1125,9 +1235,6 @@ function TxnForm({ s, T, data, addTxn, editTxn, delTxn, setSatisfaction, close, 
   const [memo, setMemo] = useState(edit?.memo || pre?.memo || "");
   const [date, setDate] = useState(edit?.date || pre?.date || todayISO());
   const [showCatMgr, setShowCatMgr] = useState(false);
-  const [flash, setFlash] = useState(false); // インライン保存時の「保存しました」表示
-  const flashTimer = React.useRef(null);
-  useEffect(() => () => clearTimeout(flashTimer.current), []);
 
   // ホイールに出す項目: アクティブ + （編集中の記録が削除済みカテゴリの場合はそれも含める）
   const activeCats = data.cats.filter((c) => !c.archived);
@@ -1148,27 +1255,18 @@ function TxnForm({ s, T, data, addTxn, editTxn, delTxn, setSatisfaction, close, 
       addTxn({ type, amount: amt, category, memo: memo.trim(), date });
     }
     if (modal?.shoppingId) markBought(modal.shoppingId);
-    if (inline) {
-      // ホームのフォーム: 閉じずにリセットして続けて入力できるように
-      setAmount(""); setMemo(""); setDate(todayISO());
-      buzz(10);
-      setFlash(true);
-      clearTimeout(flashTimer.current);
-      flashTimer.current = setTimeout(() => setFlash(false), 1800);
-    } else {
-      close();
-    }
+    close();
   };
 
   return (
     <>
-      {!inline && <SheetHead s={s} T={T} title={edit ? "記録を編集" : "記録する"} close={close} onDelete={edit ? () => { delTxn(edit.id); close(); } : null} />}
+      <SheetHead s={s} T={T} title={edit ? "記録を編集" : "記録する"} close={close} onDelete={edit ? () => { delTxn(edit.id); close(); } : null} />
       <div style={s.segRow}>
         <button style={{ ...s.seg, ...(type === "expense" ? s.segOn(T, T.neg) : {}) }} onClick={() => setType("expense")}>支出</button>
         <button style={{ ...s.seg, ...(type === "income" ? s.segOn(T, T.pos) : {}) }} onClick={() => setType("income")}>収入</button>
       </div>
       <Field s={s} T={T} label="金額">
-        <div style={s.amtWrap}><span style={s.yenMark}>¥</span><input autoFocus={!inline} style={s.amtInput} inputMode="numeric" pattern="[0-9]*" value={amount} placeholder="0" onChange={(e) => setAmount(e.target.value.replace(/[^0-9]/g, ""))} /></div>
+        <div style={s.amtWrap}><span style={s.yenMark}>¥</span><input autoFocus style={s.amtInput} inputMode="numeric" pattern="[0-9]*" value={amount} placeholder="0" onChange={(e) => setAmount(e.target.value.replace(/[^0-9]/g, ""))} /></div>
       </Field>
       {type === "expense" && (
         <Field s={s} T={T} label="カテゴリ">
@@ -1204,8 +1302,7 @@ function TxnForm({ s, T, data, addTxn, editTxn, delTxn, setSatisfaction, close, 
           <div style={{ padding: "4px 0" }}><Stars value={edit.satisfaction} T={T} size={30} onRate={(v) => setSatisfaction(edit.id, v)} /></div>
         </Field>
       )}
-      <button style={{ ...s.btnGold, width: "100%", opacity: amount ? 1 : 0.5 }} onClick={submit}>{edit ? "保存する" : "保存"}</button>
-      {inline && flash && <div style={{ textAlign: "center", color: T.pos, fontSize: 13, fontWeight: 800, marginTop: 12 }}>✓ 保存しました</div>}
+      <button style={{ ...s.btnGold, width: "100%", opacity: amount ? 1 : 0.5 }} onClick={submit}>{edit ? "保存する" : "記録する"}</button>
     </>
   );
 }
