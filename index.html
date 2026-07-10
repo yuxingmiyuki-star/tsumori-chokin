@@ -16,6 +16,11 @@
              padding:0 24px; white-space:pre-wrap; }
   input, button, textarea { font-family: inherit; }
   input, textarea { font-size: 16px; } /* iOSの自動ズーム防止 */
+  .nosb { scrollbar-width: none; }
+  .nosb::-webkit-scrollbar { display: none; }
+  /* iOS Safari: date入力の値を左寄せ・入力幅いっぱいに */
+  input[type="date"] { min-width: 100%; }
+  input[type="date"]::-webkit-date-and-time-value { text-align: left; margin: 0; }
   ::placeholder { color: #5A606B; }
 </style>
 <script>
@@ -204,6 +209,13 @@ function App() {
   const skipSat2 = (id) => update((d) => ({ ...d, txns: d.txns.map((t) => t.id === id ? { ...t, sat2Skip: true } : t) }));
   const delTxn = (id) => update((d) => ({ ...d, txns: d.txns.filter((t) => t.id !== id) }));
 
+  // ---- カテゴリ ----
+  // 削除は archived フラグのソフト削除。過去の記録の名前・アイコン表示はそのまま維持される
+  const addCat = (c) => { const id = uid(); update((d) => ({ ...d, cats: [...d.cats, { id, name: "", icon: "receipt", ...c }] })); return id; };
+  const editCat = (id, patch) => update((d) => ({ ...d, cats: d.cats.map((c) => (c.id === id ? { ...c, ...patch } : c)) }));
+  const delCat = (id) => update((d) => ({ ...d, cats: d.cats.map((c) => (c.id === id ? { ...c, archived: true } : c)) }));
+  const restoreCat = (id) => update((d) => ({ ...d, cats: d.cats.map((c) => (c.id === id ? { ...c, archived: false } : c)) }));
+
   const logSave = (rule, actualOverride) => {
     const actual = actualOverride != null ? actualOverride : rule.actual;
     const saved = Math.max(0, rule.assumed - actual);
@@ -234,7 +246,8 @@ function App() {
 
   const shared = { data, setData, update, T, s, balance, catOf, modal, setModal, cycleSkin,
     addTxn, editTxn, setSatisfaction, setSat2, skipSat2, delTxn, logSave, delSave, addRule, editRule, delRule, addReward, editReward, delReward, redeem, delRedeem,
-    addShopItem, editShopItem, delShopItem, markBought, skipShopItem, keepShopItem };
+    addShopItem, editShopItem, delShopItem, markBought, skipShopItem, keepShopItem,
+    addCat, editCat, delCat, restoreCat };
 
   return (
     <div style={s.app}>
@@ -995,15 +1008,134 @@ function IconPicker({ s, T, value, onChange }) {
   );
 }
 
+// ドラムロール式ピッカー（iOSホイール風・スクロールスナップ）
+function WheelPicker({ s, T, items, value, onChange }) {
+  const ITEM_H = 40, VISIBLE = 5;
+  const H = ITEM_H * VISIBLE;
+  const pad = (H - ITEM_H) / 2;
+  const ref = React.useRef(null);
+  const timer = React.useRef(null);
+  const idx = Math.max(0, items.findIndex((it) => it.id === value));
+
+  // 初回・外部からの値変更・項目数変化のとき位置合わせ
+  useEffect(() => {
+    const el = ref.current; if (!el) return;
+    const target = idx * ITEM_H;
+    if (Math.abs(el.scrollTop - target) > ITEM_H * 0.55) el.scrollTop = target; // 1項目以上ズレたときだけ補正(スナップと喧嘩しない)
+  }, [value, items.length]);
+
+  const onScroll = () => {
+    const el = ref.current; if (!el) return;
+    clearTimeout(timer.current);
+    timer.current = setTimeout(() => {
+      const i = Math.min(items.length - 1, Math.max(0, Math.round(el.scrollTop / ITEM_H)));
+      if (items[i] && items[i].id !== value) { onChange(items[i].id); buzz(4); }
+    }, 100);
+  };
+
+  return (
+    <div style={{ position: "relative", height: H, borderRadius: T.R.btn, background: T.card2, border: `1px solid ${T.line}`, overflow: "hidden" }}>
+      {/* 中央の選択バンド */}
+      <div style={{ position: "absolute", top: pad, left: 8, right: 8, height: ITEM_H, borderRadius: Math.max(6, T.R.btn - 3), background: T.gold + "16", border: `1px solid ${T.gold}55`, pointerEvents: "none", zIndex: 1 }} />
+      <div ref={ref} className="nosb" onScroll={onScroll}
+        style={{ height: "100%", overflowY: "auto", scrollSnapType: "y mandatory", WebkitOverflowScrolling: "touch",
+          WebkitMaskImage: "linear-gradient(transparent, #000 22%, #000 78%, transparent)", maskImage: "linear-gradient(transparent, #000 22%, #000 78%, transparent)" }}>
+        <div style={{ height: pad }} />
+        {items.map((it, i) => {
+          const on = it.id === value;
+          return (
+            <div key={it.id} onClick={() => ref.current && ref.current.scrollTo({ top: i * ITEM_H, behavior: "smooth" })}
+              style={{ height: ITEM_H, display: "flex", alignItems: "center", justifyContent: "center", gap: 7, scrollSnapAlign: "center", cursor: "pointer",
+                color: on ? T.hi : T.lo, fontSize: on ? 16 : 14, fontWeight: on ? 700 : 500, transition: "color .15s" }}>
+              <Ic name={it.icon} size={on ? 17 : 15} color={on ? T.gold : T.lo} />
+              {it.name || "（名称未設定）"}{it.archived ? "（削除済み）" : ""}
+            </div>
+          );
+        })}
+        <div style={{ height: pad }} />
+      </div>
+    </div>
+  );
+}
+
+// カテゴリの追加・編集・削除・復元モーダル
+function CatManager({ s, T, data, addCat, editCat, delCat, restoreCat, close }) {
+  const [iconFor, setIconFor] = useState(null); // アイコン選択を開いているカテゴリid
+  const active = data.cats.filter((c) => !c.archived);
+  const archived = data.cats.filter((c) => c.archived);
+  return (
+    <div style={{ ...s.overlay, zIndex: 60 }} onClick={close}>
+      <div style={{ ...s.sheet, maxHeight: "86vh" }} onClick={(e) => e.stopPropagation()}>
+        <SheetHead s={s} T={T} title="カテゴリを追加/編集" close={close} />
+        {active.map((c) => (
+          <div key={c.id} style={{ marginBottom: 10 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <button style={{ width: 46, height: 46, flex: "none", display: "flex", alignItems: "center", justifyContent: "center", background: T.card2, border: `1px solid ${iconFor === c.id ? T.gold : T.line}`, borderRadius: T.R.icon, cursor: "pointer" }}
+                onClick={() => setIconFor(iconFor === c.id ? null : c.id)} aria-label="アイコンを変更">
+                <Ic name={c.icon} size={19} color={T.gold} />
+              </button>
+              <input style={{ ...s.input, flex: 1, width: "auto" }} value={c.name} placeholder="カテゴリ名" onChange={(e) => editCat(c.id, { name: e.target.value })} />
+              <button style={s.iconBtn} aria-label="削除"
+                onClick={() => {
+                  if (active.length <= 1) { alert("カテゴリは最低1つ必要です"); return; }
+                  if (confirm(`「${c.name || "（名称未設定）"}」を削除しますか？\n過去の記録はそのまま残ります。`)) { delCat(c.id); if (iconFor === c.id) setIconFor(null); }
+                }}>
+                <Trash2 size={17} color={T.neg} />
+              </button>
+            </div>
+            {iconFor === c.id && (
+              <div style={{ ...s.iconGrid, marginTop: 8, padding: 10, background: T.card2, borderRadius: T.R.card, border: `1px solid ${T.line}` }}>
+                {ICON_KEYS.map((k) => (
+                  <button key={k} style={{ ...s.iconCell, background: c.icon === k ? T.gold + "22" : T.modal, borderColor: c.icon === k ? T.gold : T.line }}
+                    onClick={() => { editCat(c.id, { icon: k }); setIconFor(null); buzz(5); }}>
+                    <Ic name={k} size={17} color={c.icon === k ? T.gold : T.lo} />
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        ))}
+        <button style={{ ...s.dashedBtn, width: "100%", marginTop: 4 }} onClick={() => { const id = addCat({}); setIconFor(id); }}>
+          <Plus size={15} color={T.lo} /> カテゴリを追加
+        </button>
+        {archived.length > 0 && (
+          <>
+            <div style={{ ...s.fieldLabel, marginTop: 20 }}>削除済み（過去の記録には残っています）</div>
+            {archived.map((c) => (
+              <div key={c.id} style={{ display: "flex", alignItems: "center", gap: 9, padding: "7px 2px" }}>
+                <Ic name={c.icon} size={16} color={T.lo} />
+                <span style={{ flex: 1, color: T.lo, fontSize: 14 }}>{c.name || "（名称未設定）"}</span>
+                <button style={s.catChip} onClick={() => restoreCat(c.id)}><RotateCcw size={13} color={T.lo} /> 復元</button>
+              </div>
+            ))}
+          </>
+        )}
+        <button style={{ ...s.btnGhost, width: "100%", marginTop: 16 }} onClick={close}>閉じる</button>
+      </div>
+    </div>
+  );
+}
+
 // 支出/収入フォーム
-function TxnForm({ s, T, data, addTxn, editTxn, delTxn, setSatisfaction, close, editId, modal, markBought }) {
+function TxnForm({ s, T, data, addTxn, editTxn, delTxn, setSatisfaction, close, editId, modal, markBought, addCat, editCat, delCat, restoreCat }) {
   const edit = editId ? data.txns.find((t) => t.id === editId) : null;
   const pre = !edit ? modal?.prefill : null;
   const [type, setType] = useState(edit?.type || "expense");
   const [amount, setAmount] = useState(edit ? String(edit.amount) : (pre?.amount ? String(pre.amount) : ""));
-  const [category, setCategory] = useState(edit?.category || pre?.category || data.cats[0].id);
+  const [category, setCategory] = useState(edit?.category || pre?.category || (data.cats.find((c) => !c.archived) || data.cats[0]).id);
   const [memo, setMemo] = useState(edit?.memo || pre?.memo || "");
   const [date, setDate] = useState(edit?.date || pre?.date || todayISO());
+  const [showCatMgr, setShowCatMgr] = useState(false);
+
+  // ホイールに出す項目: アクティブ + （編集中の記録が削除済みカテゴリの場合はそれも含める）
+  const activeCats = data.cats.filter((c) => !c.archived);
+  const curCat = data.cats.find((c) => c.id === category);
+  const wheelCats = curCat && curCat.archived ? [...activeCats, curCat] : activeCats;
+
+  // 選択中カテゴリが削除されたら先頭のアクティブへ寄せる
+  useEffect(() => {
+    if (!wheelCats.some((c) => c.id === category) && activeCats[0]) setCategory(activeCats[0].id);
+  }, [data.cats]);
 
   const submit = () => {
     const amt = parseInt(amount, 10);
@@ -1029,15 +1161,15 @@ function TxnForm({ s, T, data, addTxn, editTxn, delTxn, setSatisfaction, close, 
       </Field>
       {type === "expense" && (
         <Field s={s} T={T} label="カテゴリ">
-          <div style={s.catGrid}>
-            {data.cats.map((c) => (
-              <button key={c.id} style={{ ...s.catChip, ...(category === c.id ? { background: T.gold + "20", borderColor: T.gold, color: T.hi } : {}) }} onClick={() => setCategory(c.id)}>
-                <Ic name={c.icon} size={15} color={category === c.id ? T.gold : T.lo} /> {c.name}
-              </button>
-            ))}
+          <WheelPicker s={s} T={T} items={wheelCats} value={category} onChange={setCategory} />
+          <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 8 }}>
+            <button style={s.catChip} onClick={() => setShowCatMgr(true)}>
+              <Pencil size={13} color={T.lo} /> 追加/編集
+            </button>
           </div>
         </Field>
       )}
+      {showCatMgr && <CatManager s={s} T={T} data={data} addCat={addCat} editCat={editCat} delCat={delCat} restoreCat={restoreCat} close={() => setShowCatMgr(false)} />}
       <Field s={s} T={T} label="メモ">
         {type === "expense" && (
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
@@ -1055,7 +1187,7 @@ function TxnForm({ s, T, data, addTxn, editTxn, delTxn, setSatisfaction, close, 
         <input style={s.input} value={memo} placeholder={type === "income" ? "給料 など" : "ファミマ など"} onChange={(e) => setMemo(e.target.value)} />
         {type === "expense" && <div style={{ color: T.lo, fontSize: 10, marginTop: 5 }}>気分タグは任意。付けると分析タブで「気分×満足度」が見えます。</div>}
       </Field>
-      <Field s={s} T={T} label="日付"><input type="date" style={s.input} value={date} onChange={(e) => setDate(e.target.value)} /></Field>
+      <Field s={s} T={T} label="日付"><input type="date" style={s.dateInput} value={date} onChange={(e) => setDate(e.target.value)} /></Field>
       {edit && type === "expense" && (
         <Field s={s} T={T} label="満足度（このお金の使い方は？）">
           <div style={{ padding: "4px 0" }}><Stars value={edit.satisfaction} T={T} size={30} onRate={(v) => setSatisfaction(edit.id, v)} /></div>
@@ -1154,8 +1286,9 @@ function ShopItemForm({ s, T, data, addShopItem, editShopItem, delShopItem, clos
   const edit = editId ? data.shopping.find((x) => x.id === editId) : null;
   const [name, setName] = useState(edit?.name || "");
   const [price, setPrice] = useState(edit?.price ? String(edit.price) : "");
-  const [category, setCategory] = useState(edit?.category || data.cats[0].id);
+  const [category, setCategory] = useState(edit?.category || (data.cats.find((c) => !c.archived) || data.cats[0]).id);
   const [icon, setIcon] = useState(edit?.icon || "cart");
+  const pickCats = data.cats.filter((c) => !c.archived || c.id === category);
   const submit = () => {
     if (!name.trim()) return;
     const p = parseInt(price, 10) || 0;
@@ -1171,7 +1304,7 @@ function ShopItemForm({ s, T, data, addShopItem, editShopItem, delShopItem, clos
       <Field s={s} T={T} label="予算（我慢したらこの額がつもり貯金に）"><NumInput s={s} value={price} onChange={setPrice} placeholder="3000" /></Field>
       <Field s={s} T={T} label="カテゴリ">
         <div style={s.catGrid}>
-          {data.cats.map((c) => (
+          {pickCats.map((c) => (
             <button key={c.id} style={{ ...s.catChip, ...(category === c.id ? { background: T.gold + "20", borderColor: T.gold, color: T.hi } : {}) }} onClick={() => setCategory(c.id)}>
               <Ic name={c.icon} size={15} color={category === c.id ? T.gold : T.lo} /> {c.name}
             </button>
@@ -1365,6 +1498,8 @@ function styles(T) {
 
     fieldLabel: { fontSize: 12, fontWeight: 700, color: T.lo, marginBottom: 7 },
     input: { width: "100%", padding: "12px 14px", background: T.card2, border: `1px solid ${T.line}`, borderRadius: R.btn, color: T.hi, fontSize: 15, outline: "none", fontFamily: T.font },
+    // iOSのinput[type=date]は固有幅で縮むため、appearanceを外して全幅・左寄せ・高さ固定にする
+    dateInput: { display: "block", width: "100%", minHeight: 47, padding: "12px 14px", background: T.card2, border: `1px solid ${T.line}`, borderRadius: R.btn, color: T.hi, fontSize: 15, outline: "none", fontFamily: T.font, WebkitAppearance: "none", appearance: "none", textAlign: "left", colorScheme: T.dark ? "dark" : "light" },
     amtWrap: { display: "flex", alignItems: "center", background: T.card2, border: `1px solid ${T.line}`, borderRadius: R.btn, padding: "4px 14px" },
     yenMark: { color: T.lo, fontSize: 24, fontWeight: 700, marginRight: 4 },
     amtInput: { flex: 1, background: "none", border: "none", color: T.hi, fontSize: 32, fontWeight: 800, outline: "none", padding: "8px 0", width: "100%", fontFamily: T.font },
